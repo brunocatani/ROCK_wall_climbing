@@ -1,0 +1,23 @@
+{
+  "name": "rock-wall-climbing",
+  "version-string": "0.1.0",
+  "description": "ROCK-powered surface climbing for Fallout 4 VR",
+  "dependencies": [
+    "rapidcsv",
+    "rsm-mmio",
+    "simpleini",
+    "spdlog",
+    "xbyak"
+  ],
+  "builtin-baseline": "b4a3d89125e45bc8f80fb94bef9761d4f4e14fb9",
+  "overrides": [
+    {
+      "name": "fmt",
+      "version": "10.2.1"
+    },
+    {
+      "name": "spdlog",
+      "version": "1.13.0"
+    }
+  ]
+}

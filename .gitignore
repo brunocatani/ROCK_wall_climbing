@@ -1,0 +1,6 @@
+.vscode/
+.vs/
+build*/
+CMakeUserPresets.json
+ROCK_WALL_CLIMBING_PROGRESS.md
+*.user
