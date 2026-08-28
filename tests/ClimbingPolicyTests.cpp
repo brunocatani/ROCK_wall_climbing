@@ -48,6 +48,33 @@ namespace
         assert(close(result.totalDelta.z, 3.0f));
     }
 
+    void dualHandStateDecodesBothIndependentBits()
+    {
+        constexpr std::uint32_t rightMask = 1u << 0;
+        constexpr std::uint32_t leftMask = 1u << 1;
+
+        const auto both = decodeActiveHands(
+            rightMask | leftMask,
+            rightMask,
+            leftMask);
+        assert(both.right);
+        assert(both.left);
+
+        const auto rightOnly = decodeActiveHands(
+            rightMask,
+            rightMask,
+            leftMask);
+        assert(rightOnly.right);
+        assert(!rightOnly.left);
+
+        const auto leftOnly = decodeActiveHands(
+            leftMask,
+            rightMask,
+            leftMask);
+        assert(!leftOnly.right);
+        assert(leftOnly.left);
+    }
+
     void discontinuitiesFailClosed()
     {
         HandMotionInput input{};
@@ -168,6 +195,7 @@ namespace
 int main()
 {
     inverseHandMotionAndSurfaceCarry();
+    dualHandStateDecodesBothIndependentBits();
     discontinuitiesFailClosed();
     smoothingIsFrameRateCoherent();
     launchRejectsOpposedNoiseAndCapsSpeed();

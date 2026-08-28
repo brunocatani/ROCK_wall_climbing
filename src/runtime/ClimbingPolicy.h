@@ -21,6 +21,23 @@ namespace rock_wall_climbing::policy
     [[nodiscard]] Vec3 divide(Vec3 value, float divisor) noexcept;
     [[nodiscard]] Vec3 clampMagnitude(Vec3 value, float maximum) noexcept;
 
+    struct ActiveHands
+    {
+        bool right{ false };
+        bool left{ false };
+    };
+
+    [[nodiscard]] constexpr ActiveHands decodeActiveHands(
+        const std::uint32_t activeHandMask,
+        const std::uint32_t rightHandMask,
+        const std::uint32_t leftHandMask) noexcept
+    {
+        return {
+            (activeHandMask & rightHandMask) != 0,
+            (activeHandMask & leftHandMask) != 0,
+        };
+    }
+
     struct HandMotionInput
     {
         Vec3 previousHandOffset{};

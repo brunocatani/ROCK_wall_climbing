@@ -710,6 +710,7 @@ namespace rock_wall_climbing
             target.kind = RockProviderTouchGrabKindV1::FixedAnchor;
             target.flags =
                 flag(allowedHand) |
+                flag(RockProviderTouchGrabTargetFlagV1::AllowTwoHands) |
                 flag(RockProviderTouchGrabTargetFlagV1::MatchAnyBody) |
                 flag(RockProviderTouchGrabTargetFlagV1::MatchStaticMotion) |
                 flag(RockProviderTouchGrabTargetFlagV1::MatchKeyframedMotion);
@@ -745,7 +746,7 @@ namespace rock_wall_climbing
         }
         if (!_targetsPublished) {
             logger::info(
-                "Armed right/left ROCK fixed-surface targets generation={} layers=0x{:016X} lease={}.",
+                "Armed joinable right/left ROCK fixed-surface targets generation={} layers=0x{:016X} lease={}.",
                 _targetGeneration,
                 policy::CLIMBABLE_WORLD_LAYER_MASK,
                 TARGET_LEASE_FRAMES);
@@ -803,17 +804,8 @@ namespace rock_wall_climbing
             if (state.targetGeneration != _targetGeneration) {
                 continue;
             }
-            std::size_t handIndex = 0;
-            std::uint32_t requiredHandMask = 0;
-            if (state.targetId == RIGHT_TARGET_ID) {
-                handIndex = 0;
-                requiredHandMask = static_cast<std::uint32_t>(
-                    RockProviderTouchGrabHandMaskV1::Right);
-            } else if (state.targetId == LEFT_TARGET_ID) {
-                handIndex = 1;
-                requiredHandMask = static_cast<std::uint32_t>(
-                    RockProviderTouchGrabHandMaskV1::Left);
-            } else {
+            if (state.targetId != RIGHT_TARGET_ID &&
+                state.targetId != LEFT_TARGET_ID) {
                 continue;
             }
 
@@ -822,20 +814,39 @@ namespace rock_wall_climbing
                 invalidated = true;
                 continue;
             }
-            auto& hand = observed[handIndex];
-            hand.held =
+            const bool targetHeld =
                 state.phase == RockProviderTouchGrabPhaseV1::Held &&
                 state.kind == RockProviderTouchGrabKindV1::FixedAnchor &&
-                (state.activeHandMask & requiredHandMask) != 0 &&
                 state.bodyId != INVALID_BODY_ID;
-            hand.anchorValid = hand.held &&
+            if (!targetHeld) {
+                continue;
+            }
+
+            const auto activeHands = policy::decodeActiveHands(
+                state.activeHandMask,
+                static_cast<std::uint32_t>(
+                    RockProviderTouchGrabHandMaskV1::Right),
+                static_cast<std::uint32_t>(
+                    RockProviderTouchGrabHandMaskV1::Left));
+            const policy::Vec3 anchor = point(state.contactPointGame);
+            const bool anchorValid =
                 hasStateFlag(
                     state.flags,
                     RockProviderTouchGrabStateFlagV1::ContactPointValid) &&
-                validCoordinate(point(state.contactPointGame));
-            hand.anchor = hand.anchorValid ?
-                point(state.contactPointGame) :
-                policy::Vec3{};
+                validCoordinate(anchor);
+            const auto mergeHand = [&](
+                                       const std::size_t handIndex,
+                                       const bool active) {
+                if (!active) {
+                    return;
+                }
+                auto& hand = observed[handIndex];
+                hand.held = true;
+                hand.anchorValid = anchorValid;
+                hand.anchor = anchorValid ? anchor : policy::Vec3{};
+            };
+            mergeHand(0, activeHands.right);
+            mergeHand(1, activeHands.left);
         }
         return true;
     }
