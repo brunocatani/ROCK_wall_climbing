@@ -33,6 +33,12 @@ namespace rock_wall_climbing
             std::span<rock::provider::RockProviderTouchGrabStateV1> states,
             std::uint32_t& outCount) const noexcept;
 
+        [[nodiscard]] rock::provider::RockProviderResultV1
+            queryHandInteractionState(
+                rock::provider::RockProviderHand hand,
+                rock::provider::RockProviderHandInteractionStateV1& state)
+                const noexcept;
+
         [[nodiscard]] rock::provider::RockProviderResultV1 queryWorldRaycast(
             const rock::provider::RockProviderWorldRaycastRequestV1& request,
             rock::provider::RockProviderWorldRaycastResultV1& result)

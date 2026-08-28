@@ -118,6 +118,80 @@ namespace rock_wall_climbing::policy
         return result;
     }
 
+    float advanceHandBlendWeight(
+        const float currentWeight,
+        const float deltaSeconds,
+        const float rampSeconds) noexcept
+    {
+        if (!std::isfinite(currentWeight)) {
+            return 0.0f;
+        }
+        const float boundedWeight = std::clamp(currentWeight, 0.0f, 1.0f);
+        if (!std::isfinite(deltaSeconds) || deltaSeconds <= 0.0f ||
+            !std::isfinite(rampSeconds) || rampSeconds <= 0.0f) {
+            return boundedWeight;
+        }
+        return std::min(1.0f, boundedWeight + deltaSeconds / rampSeconds);
+    }
+
+    HandMotionBlend blendHandMotions(
+        const std::span<const HandMotionContribution> contributions) noexcept
+    {
+        HandMotionBlend blend{};
+        Vec3 weightedMovement{};
+        Vec3 weightedPull{};
+        for (const auto& contribution : contributions) {
+            if (!contribution.valid ||
+                !finite(contribution.movementDelta) ||
+                !finite(contribution.pullDelta) ||
+                !std::isfinite(contribution.weight) ||
+                contribution.weight <= 0.0f) {
+                continue;
+            }
+            weightedMovement = add(
+                weightedMovement,
+                scale(contribution.movementDelta, contribution.weight));
+            weightedPull = add(
+                weightedPull,
+                scale(contribution.pullDelta, contribution.weight));
+            blend.totalWeight += contribution.weight;
+            ++blend.contributionCount;
+        }
+
+        if (!std::isfinite(blend.totalWeight) ||
+            blend.totalWeight <= 1.0e-6f ||
+            blend.contributionCount == 0) {
+            return {};
+        }
+
+        blend.movementDelta = divide(weightedMovement, blend.totalWeight);
+        blend.pullDelta = divide(weightedPull, blend.totalWeight);
+        blend.valid = finite(blend.movementDelta) && finite(blend.pullDelta);
+        return blend.valid ? blend : HandMotionBlend{};
+    }
+
+    float adaptiveSmoothingSpeed(
+        const float baseSpeed,
+        const float targetLead) noexcept
+    {
+        if (!std::isfinite(baseSpeed) || baseSpeed <= 0.0f ||
+            !std::isfinite(targetLead)) {
+            return 0.0f;
+        }
+        const float normalized = std::clamp(
+            targetLead / ADAPTIVE_SMOOTHING_FULL_RESPONSE_DISTANCE,
+            0.0f,
+            1.0f);
+        const float response =
+            normalized * normalized * (3.0f - 2.0f * normalized);
+        const float multiplier =
+            ADAPTIVE_SMOOTHING_QUIET_MULTIPLIER +
+            (ADAPTIVE_SMOOTHING_ACTIVE_MULTIPLIER -
+                ADAPTIVE_SMOOTHING_QUIET_MULTIPLIER) *
+                response;
+        return baseSpeed * multiplier;
+    }
+
     float exponentialSmoothingFactor(
         const float speed,
         const float deltaSeconds) noexcept

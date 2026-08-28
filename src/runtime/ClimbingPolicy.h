@@ -63,6 +63,41 @@ namespace rock_wall_climbing::policy
     [[nodiscard]] HandMotionResult evaluateHandMotion(
         const HandMotionInput& input) noexcept;
 
+    inline constexpr float HAND_JOIN_BLEND_SECONDS = 0.08f;
+
+    struct HandMotionContribution
+    {
+        bool valid{ false };
+        float weight{ 0.0f };
+        Vec3 movementDelta{};
+        Vec3 pullDelta{};
+    };
+
+    struct HandMotionBlend
+    {
+        bool valid{ false };
+        std::uint32_t contributionCount{ 0 };
+        float totalWeight{ 0.0f };
+        Vec3 movementDelta{};
+        Vec3 pullDelta{};
+    };
+
+    [[nodiscard]] float advanceHandBlendWeight(
+        float currentWeight,
+        float deltaSeconds,
+        float rampSeconds) noexcept;
+
+    [[nodiscard]] HandMotionBlend blendHandMotions(
+        std::span<const HandMotionContribution> contributions) noexcept;
+
+    inline constexpr float ADAPTIVE_SMOOTHING_QUIET_MULTIPLIER = 0.75f;
+    inline constexpr float ADAPTIVE_SMOOTHING_ACTIVE_MULTIPLIER = 1.45f;
+    inline constexpr float ADAPTIVE_SMOOTHING_FULL_RESPONSE_DISTANCE = 12.0f;
+
+    [[nodiscard]] float adaptiveSmoothingSpeed(
+        float baseSpeed,
+        float targetLead) noexcept;
+
     [[nodiscard]] float exponentialSmoothingFactor(
         float speed,
         float deltaSeconds) noexcept;

@@ -17,7 +17,10 @@ namespace rock_wall_climbing
                     TouchGrabTargets) |
             static_cast<std::uint32_t>(
                 rock::provider::RockProviderConsumerCapabilityV1::
-                    WorldRaycasts);
+                    WorldRaycasts) |
+            static_cast<std::uint32_t>(
+                rock::provider::RockProviderConsumerCapabilityV1::
+                    HandInteractionState);
     }
 
     RockApiClient& rockApiClient() noexcept
@@ -53,6 +56,7 @@ namespace rock_wall_climbing
         if (!_api ||
             !snapshotEnrichment ||
             !rock::provider::supportsOwnerFrameCallbacksV1() ||
+            !rock::provider::supportsHandInteractionStateV1() ||
             !rock::provider::supportsTouchGrabTargetsV1() ||
             !rock::provider::supportsWorldRaycastsV1() ||
             !_api->registerConsumerV1 ||
@@ -62,9 +66,10 @@ namespace rock_wall_climbing
             !_api->setTouchGrabTargetsForScopeV1 ||
             !_api->clearTouchGrabTargetsForScopeV1 ||
             !_api->copyTouchGrabStatesForScopeV1 ||
+            !_api->getHandInteractionStateV1 ||
             !_api->queryWorldRaycastV1) {
             logger::error(
-                "Loaded ROCK V1 provider lacks the complete climbing contract (snapshot enrichment, owner callbacks, touch grabs, and world raycasts).");
+                "Loaded ROCK V1 provider lacks the complete climbing contract (snapshot enrichment, owner callbacks, per-hand interaction state, touch grabs, and world raycasts).");
             _api = nullptr;
             return false;
         }
@@ -193,6 +198,22 @@ namespace rock_wall_climbing
             states.data(),
             static_cast<std::uint32_t>(states.size()),
             &outCount);
+    }
+
+    rock::provider::RockProviderResultV1
+        RockApiClient::queryHandInteractionState(
+            const rock::provider::RockProviderHand hand,
+            rock::provider::RockProviderHandInteractionStateV1& state)
+            const noexcept
+    {
+        state = {};
+        if (!ready()) {
+            return rock::provider::RockProviderResultV1::NotReady;
+        }
+        return _api->getHandInteractionStateV1(
+            _ownerToken,
+            hand,
+            &state);
     }
 
     rock::provider::RockProviderResultV1 RockApiClient::queryWorldRaycast(

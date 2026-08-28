@@ -105,7 +105,7 @@ namespace rock_wall_climbing
             1.0f, 0.1f, 2.0f);
         smoothingSpeed = readClampedFloat(
             ini, "Climbing", "fSmoothingSpeed", smoothingSpeed,
-            18.0f, 1.0f, 80.0f);
+            13.0f, 1.0f, 80.0f);
         maximumHandDeltaGameUnits = readClampedFloat(
             ini, "Climbing", "fMaximumHandDeltaGameUnits",
             maximumHandDeltaGameUnits, 24.0f, 2.0f, 100.0f);

@@ -65,6 +65,8 @@ namespace rock_wall_climbing
         {
             bool held{ false };
             bool baselineValid{ false };
+            std::uint32_t bodyId{ 0x7FFF'FFFFu };
+            float blendWeight{ 0.0f };
             policy::Vec3 previousHandOffset{};
             bool previousAnchorValid{ false };
             policy::Vec3 previousAnchor{};
@@ -73,6 +75,7 @@ namespace rock_wall_climbing
         struct ObservedHand
         {
             bool held{ false };
+            std::uint32_t bodyId{ 0x7FFF'FFFFu };
             bool anchorValid{ false };
             policy::Vec3 anchor{};
         };

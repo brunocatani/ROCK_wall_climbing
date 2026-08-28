@@ -95,6 +95,77 @@ namespace
         assert(close(oneStep, composed, 1.0e-5f));
     }
 
+    void joinedHandConfidenceRampsByElapsedTime()
+    {
+        float fourStepWeight = 0.0f;
+        for (int index = 0; index < 4; ++index) {
+            fourStepWeight = advanceHandBlendWeight(
+                fourStepWeight,
+                0.02f,
+                HAND_JOIN_BLEND_SECONDS);
+        }
+
+        float eightStepWeight = 0.0f;
+        for (int index = 0; index < 8; ++index) {
+            eightStepWeight = advanceHandBlendWeight(
+                eightStepWeight,
+                0.01f,
+                HAND_JOIN_BLEND_SECONDS);
+        }
+
+        assert(close(fourStepWeight, 1.0f));
+        assert(close(eightStepWeight, 1.0f));
+        assert(close(
+            advanceHandBlendWeight(0.0f, 0.02f, HAND_JOIN_BLEND_SECONDS),
+            0.25f));
+    }
+
+    void handMotionBlendPreservesSingleHandAndFadesInTheSecond()
+    {
+        const std::array<HandMotionContribution, 2> joined{
+            HandMotionContribution{
+                true, 1.0f, { 8.0f, 0.0f, 0.0f },
+                { 4.0f, 0.0f, 0.0f } },
+            HandMotionContribution{
+                true, 0.25f, { -8.0f, 0.0f, 0.0f },
+                { -4.0f, 0.0f, 0.0f } },
+        };
+        const auto partialBlend = blendHandMotions(joined);
+        assert(partialBlend.valid);
+        assert(partialBlend.contributionCount == 2);
+        assert(close(partialBlend.movementDelta.x, 4.8f));
+        assert(close(partialBlend.pullDelta.x, 2.4f));
+
+        const std::array<HandMotionContribution, 2> isolated{
+            HandMotionContribution{
+                true, 0.2f, { 7.0f, 2.0f, -1.0f },
+                { 3.0f, 1.0f, 0.0f } },
+            HandMotionContribution{
+                false, 1.0f, { -50.0f, 0.0f, 0.0f },
+                { -50.0f, 0.0f, 0.0f } },
+        };
+        const auto isolatedBlend = blendHandMotions(isolated);
+        assert(isolatedBlend.valid);
+        assert(isolatedBlend.contributionCount == 1);
+        assert(close(isolatedBlend.movementDelta.x, 7.0f));
+        assert(close(isolatedBlend.movementDelta.y, 2.0f));
+        assert(close(isolatedBlend.pullDelta.x, 3.0f));
+    }
+
+    void adaptiveSmoothingIsBoundedAndMonotonic()
+    {
+        const float quiet = adaptiveSmoothingSpeed(13.0f, 0.0f);
+        const float middle = adaptiveSmoothingSpeed(13.0f, 6.0f);
+        const float active = adaptiveSmoothingSpeed(13.0f, 12.0f);
+        const float beyond = adaptiveSmoothingSpeed(13.0f, 40.0f);
+
+        assert(close(quiet, 9.75f));
+        assert(quiet < middle);
+        assert(middle < active);
+        assert(close(active, 18.85f));
+        assert(close(beyond, active));
+    }
+
     void launchRejectsOpposedNoiseAndCapsSpeed()
     {
         std::array<VelocitySample, 4> samples{
@@ -150,6 +221,25 @@ namespace
         }
     }
 
+    void zeroHandoffSamplesAgeOutOldLaunchMomentum()
+    {
+        VelocityHistory history;
+        history.push(
+            VelocitySample{ { 12.0f, 0.0f, 0.0f }, 0.04f },
+            0.18f);
+        for (int index = 0; index < 5; ++index) {
+            history.push(
+                VelocitySample{ {}, 0.04f },
+                0.18f);
+        }
+
+        std::array<VelocitySample, VelocityHistory::CAPACITY> copied{};
+        const auto samples = history.copyChronological(copied);
+        LaunchSettings settings{};
+        settings.minimumSpeed = 1.0f;
+        assert(close(length(calculateLaunchVelocity(samples, settings)), 0.0f));
+    }
+
     void controllerVelocityDispatchRejectsTheTransformSlot()
     {
         constexpr std::uintptr_t moduleBase = 0x140000000;
@@ -198,9 +288,13 @@ int main()
     dualHandStateDecodesBothIndependentBits();
     discontinuitiesFailClosed();
     smoothingIsFrameRateCoherent();
+    joinedHandConfidenceRampsByElapsedTime();
+    handMotionBlendPreservesSingleHandAndFadesInTheSecond();
+    adaptiveSmoothingIsBoundedAndMonotonic();
     launchRejectsOpposedNoiseAndCapsSpeed();
     slowReleaseDoesNotLaunch();
     velocityHistoryIsBoundedAndChronological();
+    zeroHandoffSamplesAgeOutOldLaunchMomentum();
     controllerVelocityDispatchRejectsTheTransformSlot();
     gravityRestoreDefersWithoutDiscardingOwnership();
     return 0;

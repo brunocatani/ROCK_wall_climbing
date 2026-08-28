@@ -62,9 +62,9 @@ namespace rock_wall_climbing
             return static_cast<std::uint32_t>(value);
         }
 
-        [[nodiscard]] constexpr bool hasStateFlag(
+        [[nodiscard]] constexpr bool hasHandInteractionFlag(
             const std::uint32_t flags,
-            const RockProviderTouchGrabStateFlagV1 value) noexcept
+            const RockProviderHandInteractionFlagV1 value) noexcept
         {
             return (flags & static_cast<std::uint32_t>(value)) != 0;
         }
@@ -494,40 +494,19 @@ namespace rock_wall_climbing
                 access.playerPosition.z);
         }
 
-        policy::Vec3 movementSum{};
-        policy::Vec3 pullSum{};
-        std::uint32_t contributionCount = 0;
-        bool discontinuity = false;
-
+        bool ownershipTransition = false;
         for (std::size_t index = 0; index < _hands.size(); ++index) {
             auto& hand = _hands[index];
             const auto& current = observed[index];
             const bool wasHeld = hand.held;
-
-            if (wasHeld && hand.baselineValid) {
-                policy::HandMotionInput input{};
-                input.previousHandOffset = hand.previousHandOffset;
-                input.currentHandOffset = currentHandOffsets[index];
-                input.previousAnchorValid = hand.previousAnchorValid;
-                input.currentAnchorValid = current.held && current.anchorValid;
-                input.previousAnchor = hand.previousAnchor;
-                input.currentAnchor = current.anchor;
-                input.movementScale = _config.movementScale;
-                input.maximumDelta = _config.maximumHandDeltaGameUnits;
-                input.followMovingSurface =
-                    _config.followMovingSurfaces && current.held;
-
-                const auto motion = policy::evaluateHandMotion(input);
-                if (motion.discontinuity) {
-                    discontinuity = true;
-                } else if (motion.valid) {
-                    movementSum = policy::add(
-                        movementSum,
-                        motion.totalDelta);
-                    pullSum = policy::add(pullSum, motion.pullDelta);
-                    ++contributionCount;
-                }
-            }
+            const bool sameBody =
+                wasHeld && current.held && hand.bodyId == current.bodyId;
+            const bool continuingOwnership =
+                sameBody && hand.baselineValid;
+            ownershipTransition = ownershipTransition ||
+                wasHeld != current.held ||
+                (wasHeld && current.held && !sameBody) ||
+                (current.held && !hand.baselineValid);
 
             if (current.held) {
                 if (!wasHeld) {
@@ -536,12 +515,18 @@ namespace rock_wall_climbing
                         index == 0 ? "Right" : "Left",
                         _targetGeneration,
                         current.anchorValid ? "contact" : "unavailable");
+                } else if (!sameBody) {
+                    logger::info(
+                        "{} hand changed climbing surface body from {} to {}.",
+                        index == 0 ? "Right" : "Left",
+                        hand.bodyId,
+                        current.bodyId);
                 }
                 hand.held = true;
-                hand.baselineValid = true;
-                hand.previousHandOffset = currentHandOffsets[index];
-                hand.previousAnchorValid = current.anchorValid;
-                hand.previousAnchor = current.anchor;
+                hand.bodyId = current.bodyId;
+                hand.blendWeight = continuingOwnership ?
+                    hand.blendWeight :
+                    0.0f;
             } else {
                 if (wasHeld) {
                     logger::info(
@@ -552,35 +537,89 @@ namespace rock_wall_climbing
             }
         }
 
-        if (discontinuity) {
-            logger::warn(
-                "Tracking or surface-anchor discontinuity exceeded {:.1f} game units; rebasing climb motion.",
-                _config.maximumHandDeltaGameUnits);
-            _targetPlayerPosition = access.playerPosition;
-            _targetPositionValid = true;
-            _velocityHistory.clear();
-            movementSum = {};
-            pullSum = {};
-            contributionCount = 0;
-        }
-
         if (currentHeldCount == 0) {
-            if (_climbing && contributionCount > 0) {
-                _velocityHistory.push(
-                    policy::VelocitySample{
-                        policy::divide(
-                            pullSum,
-                            static_cast<float>(contributionCount)),
-                        snapshot.deltaSeconds,
-                    },
-                    _config.launch.historySeconds);
-            }
             finishClimb(
                 &access,
                 snapshot.gameToHavokScale,
                 true,
                 "final-release");
             return;
+        }
+
+        policy::HandMotionBlend motionBlend{};
+        if (ownershipTransition) {
+            for (std::size_t index = 0; index < _hands.size(); ++index) {
+                auto& hand = _hands[index];
+                const auto& current = observed[index];
+                if (!current.held) {
+                    continue;
+                }
+                hand.baselineValid = true;
+                hand.previousHandOffset = currentHandOffsets[index];
+                hand.previousAnchorValid = current.anchorValid;
+                hand.previousAnchor = current.anchor;
+            }
+            _velocityHistory.push(
+                policy::VelocitySample{ {}, snapshot.deltaSeconds },
+                _config.launch.historySeconds);
+        } else {
+            std::array<policy::HandMotionContribution, 2> contributions{};
+            std::uint32_t discontinuityCount = 0;
+            for (std::size_t index = 0; index < _hands.size(); ++index) {
+                auto& hand = _hands[index];
+                const auto& current = observed[index];
+                if (!current.held || !hand.held || !hand.baselineValid ||
+                    hand.bodyId != current.bodyId) {
+                    continue;
+                }
+
+                hand.blendWeight = policy::advanceHandBlendWeight(
+                    hand.blendWeight,
+                    snapshot.deltaSeconds,
+                    policy::HAND_JOIN_BLEND_SECONDS);
+                policy::HandMotionInput input{};
+                input.previousHandOffset = hand.previousHandOffset;
+                input.currentHandOffset = currentHandOffsets[index];
+                input.previousAnchorValid = hand.previousAnchorValid;
+                input.currentAnchorValid = current.anchorValid;
+                input.previousAnchor = hand.previousAnchor;
+                input.currentAnchor = current.anchor;
+                input.movementScale = _config.movementScale;
+                input.maximumDelta = _config.maximumHandDeltaGameUnits;
+                input.followMovingSurface = _config.followMovingSurfaces;
+
+                const auto motion = policy::evaluateHandMotion(input);
+                if (motion.discontinuity) {
+                    ++discontinuityCount;
+                    hand.blendWeight = 0.0f;
+                } else if (motion.valid) {
+                    contributions[index] = {
+                        true,
+                        hand.blendWeight,
+                        motion.totalDelta,
+                        motion.pullDelta,
+                    };
+                }
+
+                hand.previousHandOffset = currentHandOffsets[index];
+                hand.previousAnchorValid = current.anchorValid;
+                hand.previousAnchor = current.anchor;
+            }
+
+            motionBlend = policy::blendHandMotions(contributions);
+            if (discontinuityCount > 0 && motionBlend.valid) {
+                logger::warn(
+                    "Ignored {} held-hand tracking discontinuity above {:.1f} game units; valid hand motion continued.",
+                    discontinuityCount,
+                    _config.maximumHandDeltaGameUnits);
+            } else if (discontinuityCount > 0) {
+                logger::warn(
+                    "All held-hand motion exceeded the {:.1f} game-unit continuity limit; rebasing climb motion.",
+                    _config.maximumHandDeltaGameUnits);
+                _targetPlayerPosition = access.playerPosition;
+                _targetPositionValid = true;
+                _velocityHistory.clear();
+            }
         }
 
         if (!suspendGravity(access)) {
@@ -606,31 +645,33 @@ namespace rock_wall_climbing
                 _config.maximumTargetSeparationGameUnits);
             _targetPlayerPosition = access.playerPosition;
             _velocityHistory.clear();
-            contributionCount = 0;
-            movementSum = {};
-            pullSum = {};
+            motionBlend = {};
         }
 
-        policy::Vec3 averagedPull{};
-        if (contributionCount > 0) {
-            const float divisor = static_cast<float>(contributionCount);
-            const policy::Vec3 averagedMovement = policy::divide(
-                movementSum,
-                divisor);
-            averagedPull = policy::divide(pullSum, divisor);
+        policy::Vec3 blendedPull{};
+        if (motionBlend.valid) {
+            blendedPull = motionBlend.pullDelta;
             _targetPlayerPosition = policy::add(
                 _targetPlayerPosition,
-                averagedMovement);
+                motionBlend.movementDelta);
         }
-        _velocityHistory.push(
-            policy::VelocitySample{
-                averagedPull,
-                snapshot.deltaSeconds,
-            },
-            _config.launch.historySeconds);
+        if (!ownershipTransition) {
+            _velocityHistory.push(
+                policy::VelocitySample{
+                    blendedPull,
+                    snapshot.deltaSeconds,
+                },
+                _config.launch.historySeconds);
+        }
 
-        const float smoothingFactor = policy::exponentialSmoothingFactor(
+        const float targetLead = policy::length(policy::subtract(
+            _targetPlayerPosition,
+            access.playerPosition));
+        const float smoothingSpeed = policy::adaptiveSmoothingSpeed(
             _config.smoothingSpeed,
+            targetLead);
+        const float smoothingFactor = policy::exponentialSmoothingFactor(
+            smoothingSpeed,
             snapshot.deltaSeconds);
         const policy::Vec3 desiredPosition = policy::add(
             access.playerPosition,
@@ -682,9 +723,9 @@ namespace rock_wall_climbing
                 "Climb frame={} hands={} pull=({:.2f},{:.2f},{:.2f}) targetLead={:.2f} step=({:.2f},{:.2f},{:.2f}) headClamped={} history={}.",
                 snapshot.frameIndex,
                 currentHeldCount,
-                averagedPull.x,
-                averagedPull.y,
-                averagedPull.z,
+                blendedPull.x,
+                blendedPull.y,
+                blendedPull.z,
                 policy::length(policy::subtract(
                     _targetPlayerPosition,
                     access.playerPosition)),
@@ -828,12 +869,6 @@ namespace rock_wall_climbing
                     RockProviderTouchGrabHandMaskV1::Right),
                 static_cast<std::uint32_t>(
                     RockProviderTouchGrabHandMaskV1::Left));
-            const policy::Vec3 anchor = point(state.contactPointGame);
-            const bool anchorValid =
-                hasStateFlag(
-                    state.flags,
-                    RockProviderTouchGrabStateFlagV1::ContactPointValid) &&
-                validCoordinate(anchor);
             const auto mergeHand = [&](
                                        const std::size_t handIndex,
                                        const bool active) {
@@ -841,12 +876,61 @@ namespace rock_wall_climbing
                     return;
                 }
                 auto& hand = observed[handIndex];
+                if (hand.held && hand.bodyId != state.bodyId) {
+                    invalidated = true;
+                    return;
+                }
                 hand.held = true;
-                hand.anchorValid = anchorValid;
-                hand.anchor = anchorValid ? anchor : policy::Vec3{};
+                hand.bodyId = state.bodyId;
             };
             mergeHand(0, activeHands.right);
             mergeHand(1, activeHands.left);
+        }
+
+        if (invalidated) {
+            return true;
+        }
+
+        constexpr std::array<RockProviderHand, 2> PROVIDER_HANDS{
+            RockProviderHand::Right,
+            RockProviderHand::Left,
+        };
+        for (std::size_t index = 0; index < observed.size(); ++index) {
+            auto& hand = observed[index];
+            if (!hand.held) {
+                continue;
+            }
+
+            RockProviderHandInteractionStateV1 interaction{};
+            const auto interactionResult =
+                rockApiClient().queryHandInteractionState(
+                    PROVIDER_HANDS[index],
+                    interaction);
+            const bool stateMatches =
+                interactionResult == RockProviderResultV1::Ok &&
+                interaction.hand == PROVIDER_HANDS[index] &&
+                interaction.phase ==
+                    RockProviderHandInteractionPhaseV1::Holding &&
+                hasHandInteractionFlag(
+                    interaction.flags,
+                    RockProviderHandInteractionFlagV1::Valid) &&
+                hasHandInteractionFlag(
+                    interaction.flags,
+                    RockProviderHandInteractionFlagV1::TouchGrab) &&
+                hasHandInteractionFlag(
+                    interaction.flags,
+                    RockProviderHandInteractionFlagV1::FixedSurfaceLatch) &&
+                hasHandInteractionFlag(
+                    interaction.flags,
+                    RockProviderHandInteractionFlagV1::SurfaceAnchorValid) &&
+                interaction.primaryBodyId == hand.bodyId &&
+                interaction.worldGeneration == _worldGeneration &&
+                interaction.skeletonGeneration == _skeletonGeneration &&
+                interaction.providerGeneration == _providerGeneration;
+            const policy::Vec3 anchor = point(
+                interaction.surfaceAnchorGame);
+            hand.anchorValid = stateMatches && validCoordinate(anchor);
+            hand.anchor = hand.anchorValid ? anchor : policy::Vec3{};
         }
         return true;
     }
