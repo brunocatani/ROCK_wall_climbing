@@ -2,6 +2,7 @@
 
 #include "api/ROCKProviderApi.h"
 #include "runtime/ClimbingPolicy.h"
+#include "runtime/ControllerPolicy.h"
 #include "runtime/VelocityHistory.h"
 #include "support/Config.h"
 
@@ -35,18 +36,29 @@ namespace rock_wall_climbing
             MiddleHigh,
             Controller,
             Vtable,
+            VelocityDispatch,
             Gravity,
             Position,
             Complete,
         };
 
-        struct PlayerAccess
+        struct ControllerAccess
         {
             RE::PlayerCharacter* player{ nullptr };
             RE::bhkCharacterController* controller{ nullptr };
             std::uintptr_t controllerIdentity{ 0 };
-            policy::Vec3 playerPosition{};
+            std::uintptr_t controllerVtable{ 0 };
+            std::uintptr_t velocityFunction{ 0 };
+            controller_policy::VelocityImplementation
+                velocityImplementation{
+                    controller_policy::VelocityImplementation::Unknown
+                };
             float gravity{ 0.0f };
+        };
+
+        struct PlayerAccess : ControllerAccess
+        {
+            policy::Vec3 playerPosition{};
         };
 
         struct HandState
@@ -93,22 +105,26 @@ namespace rock_wall_climbing
             policy::Vec3& clampedPlayerPosition,
             bool& wasClamped) noexcept;
 
+        [[nodiscard]] static bool tryResolveControllerAccess(
+            ControllerAccess& access,
+            ControllerResolveStage& deepestStage) noexcept;
         [[nodiscard]] static bool tryResolvePlayerAccess(
             PlayerAccess& access,
             ControllerResolveStage& deepestStage) noexcept;
         [[nodiscard]] static bool tryWriteGravity(
             RE::bhkCharacterController* controller,
             float value) noexcept;
-        [[nodiscard]] static bool trySetVelocity(
-            RE::bhkCharacterController* controller,
+        [[nodiscard]] bool trySetVelocity(
+            const ControllerAccess& access,
             policy::Vec3 velocityHavok) noexcept;
         [[nodiscard]] static bool trySetPlayerPosition(
             RE::PlayerCharacter* player,
             policy::Vec3 positionGame) noexcept;
 
         [[nodiscard]] bool suspendGravity(
-            const PlayerAccess& access) noexcept;
-        void restoreGravity(const PlayerAccess* currentAccess) noexcept;
+            const ControllerAccess& access) noexcept;
+        void restoreGravity(const ControllerAccess* currentAccess) noexcept;
+        void clearGravityOwnership() noexcept;
         void finishClimb(
             const PlayerAccess* currentAccess,
             float gameToHavokScale,
@@ -131,8 +147,10 @@ namespace rock_wall_climbing
         VelocityHistory _velocityHistory{};
 
         bool _gravityOwned{ false };
+        bool _gravityRestoreDeferredLogged{ false };
         float _savedGravity{ 0.0f };
         std::uintptr_t _gravityControllerIdentity{ 0 };
+        bool _velocityDispatchLogged{ false };
 
         std::uint32_t _worldGeneration{ 0 };
         std::uint32_t _skeletonGeneration{ 0 };

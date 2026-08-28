@@ -34,6 +34,7 @@ namespace rock_wall_climbing
         static_assert(
             offsetof(RE::bhkCharacterController, gravity) == 0x330,
             "CommonLibF4VR bhkCharacterController gravity layout changed");
+        static_assert(controller_policy::VELOCITY_SLOT_OFFSET == 0x1E0);
 
         constexpr std::size_t REQUIRED_SNAPSHOT_BYTES =
             offsetof(RockProviderFrameSnapshot,
@@ -104,6 +105,74 @@ namespace rock_wall_climbing
                    std::abs(value.x) < MAXIMUM_ABSOLUTE_GAME_COORDINATE &&
                    std::abs(value.y) < MAXIMUM_ABSOLUTE_GAME_COORDINATE &&
                    std::abs(value.z) < MAXIMUM_ABSOLUTE_GAME_COORDINATE;
+        }
+
+        struct VelocityDispatchResolution
+        {
+            bool matched{ false };
+            std::uintptr_t vtableAddress{ 0 };
+            std::uintptr_t functionAddress{ 0 };
+            const controller_policy::VelocityDispatchSpec* spec{ nullptr };
+
+            [[nodiscard]] bool valid() const noexcept
+            {
+                return matched && spec &&
+                       vtableAddress != 0 && functionAddress != 0;
+            }
+        };
+
+        [[nodiscard]] VelocityDispatchResolution resolveVelocityDispatch(
+            RE::bhkCharacterController* controller) noexcept
+        {
+            VelocityDispatchResolution resolution{};
+            if (!controller) {
+                return resolution;
+            }
+            if (!REL::Module::IsVR() ||
+                REL::Module::get().version() !=
+                    F4SE::RUNTIME_VR_1_2_72) {
+                return resolution;
+            }
+
+            const std::uintptr_t moduleBase = REL::Module::get().base();
+            __try {
+                resolution.vtableAddress =
+                    reinterpret_cast<std::uintptr_t>(
+                        *reinterpret_cast<void* const*>(controller));
+                if (resolution.vtableAddress == 0) {
+                    return resolution;
+                }
+
+                const auto* vtable =
+                    reinterpret_cast<const std::uintptr_t*>(
+                        resolution.vtableAddress);
+                resolution.functionAddress =
+                    vtable[controller_policy::VELOCITY_SLOT_INDEX];
+                resolution.spec =
+                    controller_policy::selectVelocityDispatch(
+                        moduleBase,
+                        resolution.vtableAddress,
+                        resolution.functionAddress);
+                if (!resolution.spec) {
+                    return resolution;
+                }
+
+                const auto* functionBytes =
+                    reinterpret_cast<const std::uint8_t*>(
+                        resolution.functionAddress);
+                for (std::size_t index = 0;
+                     index < resolution.spec->functionPrefix.size();
+                     ++index) {
+                    if (functionBytes[index] !=
+                        resolution.spec->functionPrefix[index]) {
+                        return resolution;
+                    }
+                }
+                resolution.matched = true;
+            } __except (EXCEPTION_EXECUTE_HANDLER) {
+                resolution.matched = false;
+            }
+            return resolution;
         }
     }
 
@@ -591,7 +660,7 @@ namespace rock_wall_climbing
         const policy::Vec3 appliedStep = policy::subtract(
             clampedPosition,
             access.playerPosition);
-        if (!trySetVelocity(access.controller, {})) {
+        if (!trySetVelocity(access, {})) {
             logger::error(
                 "Player velocity cancellation failed during climbing; failing closed.");
             finishClimb(nullptr, 0.0f, false, "velocity-write");
@@ -826,8 +895,8 @@ namespace rock_wall_climbing
         return validCoordinate(clampedPlayerPosition);
     }
 
-    bool ClimbingRuntime::tryResolvePlayerAccess(
-        PlayerAccess& access,
+    bool ClimbingRuntime::tryResolveControllerAccess(
+        ControllerAccess& access,
         ControllerResolveStage& deepestStage) noexcept
     {
         access = {};
@@ -872,11 +941,16 @@ namespace rock_wall_climbing
             }
             deepestStage = ControllerResolveStage::Controller;
 
-            const void* vtable = *reinterpret_cast<void* const*>(controller);
-            if (!vtable) {
+            const auto velocityDispatch =
+                resolveVelocityDispatch(controller);
+            if (velocityDispatch.vtableAddress == 0) {
                 return false;
             }
             deepestStage = ControllerResolveStage::Vtable;
+            if (!velocityDispatch.valid()) {
+                return false;
+            }
+            deepestStage = ControllerResolveStage::VelocityDispatch;
 
             const auto* controllerBytes =
                 reinterpret_cast<const std::uint8_t*>(controller);
@@ -887,7 +961,37 @@ namespace rock_wall_climbing
             }
             deepestStage = ControllerResolveStage::Gravity;
 
-            const RE::NiPoint3 playerPosition = player->GetPosition();
+            access.player = player;
+            access.controller = controller;
+            access.controllerIdentity =
+                reinterpret_cast<std::uintptr_t>(controller);
+            access.controllerVtable = velocityDispatch.vtableAddress;
+            access.velocityFunction = velocityDispatch.functionAddress;
+            access.velocityImplementation =
+                velocityDispatch.spec->implementation;
+            access.gravity = gravity;
+            valid = true;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            valid = false;
+        }
+        return valid;
+    }
+
+    bool ClimbingRuntime::tryResolvePlayerAccess(
+        PlayerAccess& access,
+        ControllerResolveStage& deepestStage) noexcept
+    {
+        access = {};
+        ControllerAccess controllerAccess{};
+        if (!tryResolveControllerAccess(controllerAccess, deepestStage)) {
+            return false;
+        }
+        static_cast<ControllerAccess&>(access) = controllerAccess;
+
+        bool valid = false;
+        __try {
+            const RE::NiPoint3 playerPosition =
+                controllerAccess.player->GetPosition();
             const policy::Vec3 convertedPosition{
                 playerPosition.x,
                 playerPosition.y,
@@ -897,13 +1001,7 @@ namespace rock_wall_climbing
                 return false;
             }
             deepestStage = ControllerResolveStage::Position;
-
-            access.player = player;
-            access.controller = controller;
-            access.controllerIdentity =
-                reinterpret_cast<std::uintptr_t>(controller);
             access.playerPosition = convertedPosition;
-            access.gravity = gravity;
             deepestStage = ControllerResolveStage::Complete;
             valid = true;
         } __except (EXCEPTION_EXECUTE_HANDLER) {
@@ -932,10 +1030,13 @@ namespace rock_wall_climbing
     }
 
     bool ClimbingRuntime::trySetVelocity(
-        RE::bhkCharacterController* controller,
+        const ControllerAccess& access,
         const policy::Vec3 velocityHavok) noexcept
     {
-        if (!controller || !policy::finite(velocityHavok)) {
+        if (!access.controller || access.velocityFunction == 0 ||
+            access.velocityImplementation ==
+                controller_policy::VelocityImplementation::Unknown ||
+            !policy::finite(velocityHavok)) {
             return false;
         }
         bool written = false;
@@ -945,10 +1046,30 @@ namespace rock_wall_climbing
                 velocityHavok.y,
                 velocityHavok.z,
                 0.0f);
-            controller->SetLinearVelocityImpl(velocity);
+            using SetLinearVelocityFunction = void (*)(
+                RE::bhkCharacterController*,
+                const RE::hkVector4f*);
+            const auto function =
+                reinterpret_cast<SetLinearVelocityFunction>(
+                    access.velocityFunction);
+            function(access.controller, std::addressof(velocity));
             written = true;
         } __except (EXCEPTION_EXECUTE_HANDLER) {
             written = false;
+        }
+        if (written && !_velocityDispatchLogged) {
+            const char* implementation =
+                access.velocityImplementation ==
+                        controller_policy::VelocityImplementation::Proxy ?
+                    "proxy" :
+                    "rigid-body";
+            logger::info(
+                "Validated FO4VR {} controller velocity dispatch vtable={:016X} function={:016X} slot=0x{:X}.",
+                implementation,
+                access.controllerVtable,
+                access.velocityFunction,
+                controller_policy::VELOCITY_SLOT_OFFSET);
+            _velocityDispatchLogged = true;
         }
         return written;
     }
@@ -977,7 +1098,7 @@ namespace rock_wall_climbing
     }
 
     bool ClimbingRuntime::suspendGravity(
-        const PlayerAccess& access) noexcept
+        const ControllerAccess& access) noexcept
     {
         const bool controllerChanged =
             _gravityOwned &&
@@ -985,8 +1106,7 @@ namespace rock_wall_climbing
         if (controllerChanged) {
             logger::warn(
                 "Player controller identity changed during climbing; transferring gravity ownership without dereferencing the retired controller.");
-            _gravityOwned = false;
-            _gravityControllerIdentity = 0;
+            clearGravityOwnership();
         }
 
         if (!_gravityOwned) {
@@ -996,6 +1116,7 @@ namespace rock_wall_climbing
             _savedGravity = access.gravity;
             _gravityControllerIdentity = access.controllerIdentity;
             _gravityOwned = true;
+            _gravityRestoreDeferredLogged = false;
             logger::info(
                 "Suspended player gravity (saved {:.4f}) for controller {:016X}.",
                 _savedGravity,
@@ -1006,42 +1127,65 @@ namespace rock_wall_climbing
     }
 
     void ClimbingRuntime::restoreGravity(
-        const PlayerAccess* currentAccess) noexcept
+        const ControllerAccess* currentAccess) noexcept
     {
         if (!_gravityOwned) {
             return;
         }
 
-        PlayerAccess resolved{};
+        ControllerAccess resolved{};
         ControllerResolveStage deepest = ControllerResolveStage::None;
-        const PlayerAccess* access = currentAccess;
-        if (!access && tryResolvePlayerAccess(resolved, deepest)) {
+        const ControllerAccess* access = currentAccess;
+        if (!access && tryResolveControllerAccess(resolved, deepest)) {
             access = &resolved;
         }
 
-        if (access &&
-            access->controllerIdentity == _gravityControllerIdentity) {
+        const auto decision = controller_policy::decideGravityRestore(
+            access != nullptr,
+            _gravityControllerIdentity,
+            access ? access->controllerIdentity : 0);
+        if (decision ==
+            controller_policy::GravityRestoreDecision::Restore) {
             if (tryWriteGravity(access->controller, _savedGravity)) {
                 logger::info(
                     "Restored player gravity to {:.4f} for controller {:016X}.",
                     _savedGravity,
                     _gravityControllerIdentity);
+                clearGravityOwnership();
             } else {
-                logger::warn(
-                    "Could not restore player gravity for the active controller.");
+                if (!_gravityRestoreDeferredLogged) {
+                    logger::warn(
+                        "Player gravity restoration write failed; saved value {:.4f} retained for retry.",
+                        _savedGravity);
+                    _gravityRestoreDeferredLogged = true;
+                }
             }
-        } else if (access) {
-            logger::warn(
-                "Did not apply saved gravity to a different controller identity (saved {:016X}, current {:016X}).",
-                _gravityControllerIdentity,
-                access->controllerIdentity);
-        } else {
-            logger::warn(
-                "Controller disappeared before gravity restoration; no stale pointer was dereferenced (deepest stage={}).",
-                controllerStageName(deepest));
+            return;
         }
 
+        if (decision ==
+            controller_policy::GravityRestoreDecision::Retire) {
+            logger::warn(
+                "Retired saved gravity ownership after the controller changed (saved {:016X}, current {:016X}); the replacement controller was not modified.",
+                _gravityControllerIdentity,
+                access->controllerIdentity);
+            clearGravityOwnership();
+            return;
+        }
+
+        if (!_gravityRestoreDeferredLogged) {
+            logger::warn(
+                "Player gravity restoration deferred; controller-only resolution stopped at stage={} and saved value {:.4f} was retained.",
+                controllerStageName(deepest),
+                _savedGravity);
+            _gravityRestoreDeferredLogged = true;
+        }
+    }
+
+    void ClimbingRuntime::clearGravityOwnership() noexcept
+    {
         _gravityOwned = false;
+        _gravityRestoreDeferredLogged = false;
         _savedGravity = 0.0f;
         _gravityControllerIdentity = 0;
     }
@@ -1079,7 +1223,7 @@ namespace rock_wall_climbing
                     launchGame,
                     gameToHavokScale);
                 launchApplied = trySetVelocity(
-                    currentAccess->controller,
+                    *currentAccess,
                     launchHavok);
                 if (!launchApplied) {
                     logger::warn(
@@ -1087,7 +1231,7 @@ namespace rock_wall_climbing
                 }
             } else {
                 static_cast<void>(
-                    trySetVelocity(currentAccess->controller, {}));
+                    trySetVelocity(*currentAccess, {}));
             }
         }
 
@@ -1131,6 +1275,8 @@ namespace rock_wall_climbing
             return "controller";
         case ControllerResolveStage::Vtable:
             return "controllerVtable";
+        case ControllerResolveStage::VelocityDispatch:
+            return "velocityDispatch";
         case ControllerResolveStage::Gravity:
             return "gravity";
         case ControllerResolveStage::Position:

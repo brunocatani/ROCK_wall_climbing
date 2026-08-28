@@ -89,6 +89,7 @@ configure_file(
   @ONLY)
 
 add_library(ROCKWallClimbingCore STATIC
+  "${SOURCE_DIR}/runtime/ControllerPolicy.h"
   "${SOURCE_DIR}/runtime/ClimbingPolicy.cpp"
   "${SOURCE_DIR}/runtime/ClimbingPolicy.h"
   "${SOURCE_DIR}/runtime/VelocityHistory.cpp"
@@ -113,6 +114,7 @@ add_library(${PROJECT_NAME} SHARED
   "${SOURCE_DIR}/exports.def"
   "${SOURCE_DIR}/runtime/ClimbingRuntime.cpp"
   "${SOURCE_DIR}/runtime/ClimbingRuntime.h"
+  "${SOURCE_DIR}/runtime/ControllerPolicy.h"
   "${SOURCE_DIR}/support/Config.cpp"
   "${SOURCE_DIR}/support/Config.h"
   "${SOURCE_DIR}/support/Logger.h"

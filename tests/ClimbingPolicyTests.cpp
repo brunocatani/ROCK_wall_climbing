@@ -1,4 +1,5 @@
 #include "runtime/ClimbingPolicy.h"
+#include "runtime/ControllerPolicy.h"
 #include "runtime/VelocityHistory.h"
 
 #ifdef NDEBUG
@@ -12,6 +13,7 @@
 namespace
 {
     using rock_wall_climbing::VelocityHistory;
+    namespace controller_policy = rock_wall_climbing::controller_policy;
     using namespace rock_wall_climbing::policy;
 
     [[nodiscard]] bool close(
@@ -120,6 +122,47 @@ namespace
                    samples[index].displacement.x);
         }
     }
+
+    void controllerVelocityDispatchRejectsTheTransformSlot()
+    {
+        constexpr std::uintptr_t moduleBase = 0x140000000;
+        constexpr auto& proxy =
+            controller_policy::VELOCITY_DISPATCH_SPECS[0];
+        constexpr auto& rigid =
+            controller_policy::VELOCITY_DISPATCH_SPECS[1];
+
+        static_assert(controller_policy::VELOCITY_SLOT_OFFSET == 0x1E0);
+        assert(controller_policy::selectVelocityDispatch(
+                   moduleBase,
+                   moduleBase + proxy.vtableRva,
+                   moduleBase + proxy.functionRva) == &proxy);
+        assert(controller_policy::selectVelocityDispatch(
+                   moduleBase,
+                   moduleBase + rigid.vtableRva,
+                   moduleBase + rigid.functionRva) == &rigid);
+        assert(controller_policy::selectVelocityDispatch(
+                   moduleBase,
+                   moduleBase + proxy.vtableRva,
+                   moduleBase + proxy.functionRva - 0x110) == nullptr);
+        assert(controller_policy::selectVelocityDispatch(
+                   moduleBase,
+                   moduleBase + proxy.vtableRva + 0x10,
+                   moduleBase + proxy.functionRva) == nullptr);
+    }
+
+    void gravityRestoreDefersWithoutDiscardingOwnership()
+    {
+        using controller_policy::GravityRestoreDecision;
+        using controller_policy::decideGravityRestore;
+
+        constexpr std::uintptr_t savedIdentity = 0x12340000;
+        assert(decideGravityRestore(false, savedIdentity, 0) ==
+               GravityRestoreDecision::Defer);
+        assert(decideGravityRestore(true, savedIdentity, savedIdentity) ==
+               GravityRestoreDecision::Restore);
+        assert(decideGravityRestore(true, savedIdentity, 0x56780000) ==
+               GravityRestoreDecision::Retire);
+    }
 }
 
 int main()
@@ -130,5 +173,7 @@ int main()
     launchRejectsOpposedNoiseAndCapsSpeed();
     slowReleaseDoesNotLaunch();
     velocityHistoryIsBoundedAndChronological();
+    controllerVelocityDispatchRejectsTheTransformSlot();
+    gravityRestoreDefersWithoutDiscardingOwnership();
     return 0;
 }
