@@ -561,68 +561,71 @@ namespace rock_wall_climbing
                 (controllerState.flags << 8);
             if (failureKey != _lastControllerStateResult) {
                 logger::warn(
-                    "ROCK player-controller state unavailable or stale (result={} flags=0x{:03X}); climbing failed closed.",
+                    "ROCK player-controller state unavailable or stale (result={} flags=0x{:03X}); ledge and penetration assistance are disabled while the existing surface latch remains active.",
                     static_cast<std::uint32_t>(controllerStateResult),
                     controllerState.flags);
                 _lastControllerStateResult = failureKey;
             }
-            finishClimb(&access, 0.0f, false, "controller-state");
-            clearTargets();
-            return;
-        }
-        _lastControllerStateResult = UINT32_MAX;
+            // Controller telemetry augments the established climbing path. A
+            // provider readback fault must disable only ledge/penetration
+            // assistance; it must never destroy an already-valid ROCK latch.
+            _lastSafePlayerPositionValid = false;
+            _penetrationRecoveryLogged = false;
+        } else {
+            _lastControllerStateResult = UINT32_MAX;
 
-        const bool penetrating = hasControllerStateFlag(
-            controllerState.flags,
-            RockProviderPlayerControllerStateFlagV1::Penetrating);
-        if (penetrating) {
-            if (!_climbing || !_lastSafePlayerPositionValid ||
-                !suspendGravity(access) ||
-                !trySetVelocity(access, {}) ||
-                !trySetPlayerPosition(
-                    access.player,
-                    _lastSafePlayerPosition)) {
-                logger::error(
-                    "Player controller penetration could not be rolled back to a verified climbing position; climbing failed closed.");
-                finishClimb(&access, 0.0f, false, "penetration-unrecoverable");
-                clearTargets();
-                _targetsRequireGripRelease = currentHeldCount != 0;
+            const bool penetrating = hasControllerStateFlag(
+                controllerState.flags,
+                RockProviderPlayerControllerStateFlagV1::Penetrating);
+            if (penetrating) {
+                if (!_climbing || !_lastSafePlayerPositionValid ||
+                    !suspendGravity(access) ||
+                    !trySetVelocity(access, {}) ||
+                    !trySetPlayerPosition(
+                        access.player,
+                        _lastSafePlayerPosition)) {
+                    logger::error(
+                        "Player controller penetration could not be rolled back to a verified climbing position; climbing failed closed.");
+                    finishClimb(&access, 0.0f, false, "penetration-unrecoverable");
+                    clearTargets();
+                    _targetsRequireGripRelease = currentHeldCount != 0;
+                    return;
+                }
+
+                if (!_penetrationRecoveryLogged) {
+                    logger::warn(
+                        "Rolled back a penetrating climb step to last safe player position ({:.2f},{:.2f},{:.2f}); held hands will rebase before motion resumes.",
+                        _lastSafePlayerPosition.x,
+                        _lastSafePlayerPosition.y,
+                        _lastSafePlayerPosition.z);
+                    _penetrationRecoveryLogged = true;
+                }
+                _targetPlayerPosition = _lastSafePlayerPosition;
+                _targetPositionValid = true;
+                _velocityHistory.clear();
+                for (std::size_t index = 0; index < _hands.size(); ++index) {
+                    if (observed[index].held) {
+                        _hands[index].held = true;
+                        _hands[index].baselineValid = false;
+                        _hands[index].bodyId = observed[index].bodyId;
+                        _hands[index].blendWeight = 0.0f;
+                    } else {
+                        _hands[index] = {};
+                    }
+                }
+                if (currentHeldCount == 0) {
+                    finishClimb(
+                        &access,
+                        snapshot.gameToHavokScale,
+                        false,
+                        "final-release-after-rollback");
+                }
                 return;
             }
-
-            if (!_penetrationRecoveryLogged) {
-                logger::warn(
-                    "Rolled back a penetrating climb step to last safe player position ({:.2f},{:.2f},{:.2f}); held hands will rebase before motion resumes.",
-                    _lastSafePlayerPosition.x,
-                    _lastSafePlayerPosition.y,
-                    _lastSafePlayerPosition.z);
-                _penetrationRecoveryLogged = true;
-            }
-            _targetPlayerPosition = _lastSafePlayerPosition;
-            _targetPositionValid = true;
-            _velocityHistory.clear();
-            for (std::size_t index = 0; index < _hands.size(); ++index) {
-                if (observed[index].held) {
-                    _hands[index].held = true;
-                    _hands[index].baselineValid = false;
-                    _hands[index].bodyId = observed[index].bodyId;
-                    _hands[index].blendWeight = 0.0f;
-                } else {
-                    _hands[index] = {};
-                }
-            }
-            if (currentHeldCount == 0) {
-                finishClimb(
-                    &access,
-                    snapshot.gameToHavokScale,
-                    false,
-                    "final-release-after-rollback");
-            }
-            return;
+            _penetrationRecoveryLogged = false;
+            _lastSafePlayerPosition = access.playerPosition;
+            _lastSafePlayerPositionValid = true;
         }
-        _penetrationRecoveryLogged = false;
-        _lastSafePlayerPosition = access.playerPosition;
-        _lastSafePlayerPositionValid = true;
 
         const std::array<policy::Vec3, 2> currentHandOffsets{
             policy::subtract(
