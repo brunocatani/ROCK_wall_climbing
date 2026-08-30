@@ -20,7 +20,13 @@ namespace rock_wall_climbing
                     WorldRaycasts) |
             static_cast<std::uint32_t>(
                 rock::provider::RockProviderConsumerCapabilityV1::
-                    HandInteractionState);
+                    HandInteractionState) |
+            static_cast<std::uint32_t>(
+                rock::provider::RockProviderConsumerCapabilityV1::
+                    InputObservability) |
+            static_cast<std::uint32_t>(
+                rock::provider::RockProviderConsumerCapabilityV1::
+                    PlayerController);
     }
 
     RockApiClient& rockApiClient() noexcept
@@ -39,7 +45,7 @@ namespace rock_wall_climbing
             rock::provider::RockProviderApi::initialize(
                 rock::provider::ROCK_PROVIDER_API_VERSION,
                 rock::provider::
-                    ROCK_PROVIDER_API_V1_WORLD_RAYCASTS_TABLE_BYTES);
+                    ROCK_PROVIDER_API_V1_PLAYER_CONTROLLER_JUMP_TABLE_BYTES);
         if (initializeResult != 0) {
             logger::error(
                 "ROCK V1 provider initialization failed: result={}.",
@@ -59,6 +65,9 @@ namespace rock_wall_climbing
             !rock::provider::supportsHandInteractionStateV1() ||
             !rock::provider::supportsTouchGrabTargetsV1() ||
             !rock::provider::supportsWorldRaycastsV1() ||
+            !rock::provider::supportsLogicalInputActionStateV1() ||
+            !rock::provider::supportsPlayerControllerStateV1() ||
+            !rock::provider::supportsPlayerControllerJumpV1() ||
             !_api->registerConsumerV1 ||
             !_api->unregisterConsumerV1 ||
             !_api->registerFrameCallbackForOwnerV1 ||
@@ -67,9 +76,13 @@ namespace rock_wall_climbing
             !_api->clearTouchGrabTargetsForScopeV1 ||
             !_api->copyTouchGrabStatesForScopeV1 ||
             !_api->getHandInteractionStateV1 ||
-            !_api->queryWorldRaycastV1) {
+            !_api->queryWorldRaycastV1 ||
+            !_api->getRawWandButtonStateV1 ||
+            !_api->getLogicalInputActionStateV1 ||
+            !_api->getPlayerControllerStateV1 ||
+            !_api->requestPlayerControllerJumpV1) {
             logger::error(
-                "Loaded ROCK V1 provider lacks the complete climbing contract (snapshot enrichment, owner callbacks, per-hand interaction state, touch grabs, and world raycasts).");
+                "Loaded ROCK V1 provider lacks the complete climbing contract (snapshots, touch grabs, raycasts, logical input, and guarded player-controller access).");
             _api = nullptr;
             return false;
         }
@@ -229,5 +242,64 @@ namespace rock_wall_climbing
             _ownerToken,
             &request,
             &result);
+    }
+
+    rock::provider::RockProviderResultV1
+        RockApiClient::queryLogicalInputAction(
+            const rock::provider::RockProviderLogicalInputActionV1 action,
+            rock::provider::RockProviderLogicalInputActionStateV1& state)
+            const noexcept
+    {
+        state = {};
+        if (!ready()) {
+            return rock::provider::RockProviderResultV1::NotReady;
+        }
+        return _api->getLogicalInputActionStateV1(
+            _ownerToken,
+            action,
+            &state);
+    }
+
+    rock::provider::RockProviderResultV1
+        RockApiClient::queryPlayerControllerState(
+            const std::uint32_t queryFlags,
+            rock::provider::RockProviderPlayerControllerStateV1& state)
+            const noexcept
+    {
+        state = {};
+        if (!ready()) {
+            return rock::provider::RockProviderResultV1::NotReady;
+        }
+        return _api->getPlayerControllerStateV1(
+            _ownerToken,
+            queryFlags,
+            &state);
+    }
+
+    rock::provider::RockProviderResultV1
+        RockApiClient::requestPlayerControllerJump(
+            const rock::provider::
+                RockProviderPlayerControllerJumpRequestV1& request)
+            const noexcept
+    {
+        if (!ready()) {
+            return rock::provider::RockProviderResultV1::NotReady;
+        }
+        return _api->requestPlayerControllerJumpV1(
+            _ownerToken,
+            &request);
+    }
+
+    bool RockApiClient::queryRawWandButtonState(
+        const rock::provider::RockProviderHand hand,
+        const std::uint32_t buttonId,
+        rock::provider::RockProviderRawWandButtonStateV1& state)
+        const noexcept
+    {
+        state = {};
+        return ready() && _api->getRawWandButtonStateV1(
+                              hand,
+                              buttonId,
+                              &state);
     }
 }

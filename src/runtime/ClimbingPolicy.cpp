@@ -26,6 +26,14 @@ namespace rock_wall_climbing::policy
             0.0f;
     }
 
+    float dot(const Vec3 left, const Vec3 right) noexcept
+    {
+        if (!finite(left) || !finite(right)) {
+            return 0.0f;
+        }
+        return left.x * right.x + left.y * right.y + left.z * right.z;
+    }
+
     Vec3 add(const Vec3 left, const Vec3 right) noexcept
     {
         return Vec3{
@@ -71,6 +79,18 @@ namespace rock_wall_climbing::policy
         }
         const float magnitude = length(value);
         return magnitude > maximum ? scale(value, maximum / magnitude) : value;
+    }
+
+    bool tryNormalize(const Vec3 value, Vec3& normalized) noexcept
+    {
+        normalized = {};
+        const float magnitude = length(value);
+        if (!finite(value) || !std::isfinite(magnitude) ||
+            magnitude <= 1.0e-6f) {
+            return false;
+        }
+        normalized = divide(value, magnitude);
+        return finite(normalized);
     }
 
     HandMotionResult evaluateHandMotion(
@@ -170,6 +190,28 @@ namespace rock_wall_climbing::policy
         return blend.valid ? blend : HandMotionBlend{};
     }
 
+    float activityAdjustedHandWeight(
+        const float baseWeight,
+        const Vec3 pullDelta,
+        const bool releasing) noexcept
+    {
+        if (!std::isfinite(baseWeight) || baseWeight <= 0.0f ||
+            !finite(pullDelta)) {
+            return 0.0f;
+        }
+        const float normalized = std::clamp(
+            length(pullDelta) / HAND_ACTIVITY_FULL_RESPONSE_DISTANCE,
+            0.0f,
+            1.0f);
+        const float response =
+            normalized * normalized * (3.0f - 2.0f * normalized);
+        const float minimum = releasing ?
+            0.0f :
+            HELD_HAND_MINIMUM_ACTIVITY_WEIGHT;
+        return std::clamp(baseWeight, 0.0f, 1.0f) *
+               (minimum + (1.0f - minimum) * response);
+    }
+
     float adaptiveSmoothingSpeed(
         const float baseSpeed,
         const float targetLead) noexcept
@@ -204,6 +246,58 @@ namespace rock_wall_climbing::policy
             1.0f - std::exp(-speed * deltaSeconds),
             0.0f,
             1.0f);
+    }
+
+    bool resolveWallOutwardNormal(
+        const Vec3 contactNormal,
+        const Vec3 playerFromContact,
+        Vec3& outwardHorizontal) noexcept
+    {
+        outwardHorizontal = {};
+        Vec3 normalized{};
+        if (!tryNormalize(contactNormal, normalized) ||
+            std::abs(normalized.z) > LEDGE_MAXIMUM_WALL_NORMAL_Z) {
+            return false;
+        }
+        Vec3 horizontal{ normalized.x, normalized.y, 0.0f };
+        if (!tryNormalize(horizontal, horizontal)) {
+            return false;
+        }
+        if (dot(horizontal, playerFromContact) < 0.0f) {
+            horizontal = scale(horizontal, -1.0f);
+        }
+        outwardHorizontal = horizontal;
+        return true;
+    }
+
+    bool validateLedgeFloor(
+        const Vec3 floorNormal,
+        const float floorHeight,
+        const float playerHeight,
+        const float contactHeight,
+        float& rise) noexcept
+    {
+        rise = 0.0f;
+        Vec3 normalized{};
+        if (!tryNormalize(floorNormal, normalized) ||
+            normalized.z < LEDGE_MINIMUM_FLOOR_NORMAL_Z ||
+            !std::isfinite(floorHeight) ||
+            !std::isfinite(playerHeight) ||
+            !std::isfinite(contactHeight)) {
+            return false;
+        }
+        const float floorFromContact = floorHeight - contactHeight;
+        if (floorFromContact < -LEDGE_MAXIMUM_FLOOR_BELOW_CONTACT_GAME ||
+            floorFromContact > LEDGE_MAXIMUM_FLOOR_ABOVE_CONTACT_GAME) {
+            return false;
+        }
+        const float candidateRise = floorHeight - playerHeight;
+        if (candidateRise < LEDGE_MINIMUM_RISE_GAME ||
+            candidateRise > LEDGE_MAXIMUM_RISE_GAME) {
+            return false;
+        }
+        rise = candidateRise;
+        return true;
     }
 
     Vec3 calculateLaunchVelocity(

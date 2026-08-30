@@ -15,11 +15,13 @@ namespace rock_wall_climbing::policy
     [[nodiscard]] bool finite(Vec3 value) noexcept;
     [[nodiscard]] float lengthSquared(Vec3 value) noexcept;
     [[nodiscard]] float length(Vec3 value) noexcept;
+    [[nodiscard]] float dot(Vec3 left, Vec3 right) noexcept;
     [[nodiscard]] Vec3 add(Vec3 left, Vec3 right) noexcept;
     [[nodiscard]] Vec3 subtract(Vec3 left, Vec3 right) noexcept;
     [[nodiscard]] Vec3 scale(Vec3 value, float factor) noexcept;
     [[nodiscard]] Vec3 divide(Vec3 value, float divisor) noexcept;
     [[nodiscard]] Vec3 clampMagnitude(Vec3 value, float maximum) noexcept;
+    [[nodiscard]] bool tryNormalize(Vec3 value, Vec3& normalized) noexcept;
 
     struct ActiveHands
     {
@@ -90,6 +92,14 @@ namespace rock_wall_climbing::policy
     [[nodiscard]] HandMotionBlend blendHandMotions(
         std::span<const HandMotionContribution> contributions) noexcept;
 
+    inline constexpr float HAND_ACTIVITY_FULL_RESPONSE_DISTANCE = 3.0f;
+    inline constexpr float HELD_HAND_MINIMUM_ACTIVITY_WEIGHT = 0.25f;
+
+    [[nodiscard]] float activityAdjustedHandWeight(
+        float baseWeight,
+        Vec3 pullDelta,
+        bool releasing) noexcept;
+
     inline constexpr float ADAPTIVE_SMOOTHING_QUIET_MULTIPLIER = 0.75f;
     inline constexpr float ADAPTIVE_SMOOTHING_ACTIVE_MULTIPLIER = 1.45f;
     inline constexpr float ADAPTIVE_SMOOTHING_FULL_RESPONSE_DISTANCE = 12.0f;
@@ -101,6 +111,25 @@ namespace rock_wall_climbing::policy
     [[nodiscard]] float exponentialSmoothingFactor(
         float speed,
         float deltaSeconds) noexcept;
+
+    inline constexpr float LEDGE_MINIMUM_FLOOR_NORMAL_Z = 0.65f;
+    inline constexpr float LEDGE_MAXIMUM_WALL_NORMAL_Z = 0.65f;
+    inline constexpr float LEDGE_MINIMUM_RISE_GAME = 6.0f;
+    inline constexpr float LEDGE_MAXIMUM_RISE_GAME = 128.0f;
+    inline constexpr float LEDGE_MAXIMUM_FLOOR_BELOW_CONTACT_GAME = 48.0f;
+    inline constexpr float LEDGE_MAXIMUM_FLOOR_ABOVE_CONTACT_GAME = 32.0f;
+
+    [[nodiscard]] bool resolveWallOutwardNormal(
+        Vec3 contactNormal,
+        Vec3 playerFromContact,
+        Vec3& outwardHorizontal) noexcept;
+
+    [[nodiscard]] bool validateLedgeFloor(
+        Vec3 floorNormal,
+        float floorHeight,
+        float playerHeight,
+        float contactHeight,
+        float& rise) noexcept;
 
     struct VelocitySample
     {

@@ -78,6 +78,18 @@ namespace rock_wall_climbing
             std::uint32_t bodyId{ 0x7FFF'FFFFu };
             bool anchorValid{ false };
             policy::Vec3 anchor{};
+            bool normalValid{ false };
+            policy::Vec3 normal{};
+        };
+
+        struct LedgeCandidate
+        {
+            bool valid{ false };
+            policy::Vec3 floorPoint{};
+            policy::Vec3 floorNormal{};
+            policy::Vec3 outwardHorizontal{};
+            float riseGameUnits{ 0.0f };
+            float jumpHeightGameUnits{ 0.0f };
         };
 
         ClimbingRuntime() = default;
@@ -107,6 +119,18 @@ namespace rock_wall_climbing
             policy::Vec3 desiredPlayerPosition,
             policy::Vec3& clampedPlayerPosition,
             bool& wasClamped) noexcept;
+        [[nodiscard]] bool tryFindLedgeCandidate(
+            const rock::provider::RockProviderFrameSnapshot& snapshot,
+            const std::array<ObservedHand, 2>& observed,
+            const rock::provider::RockProviderPlayerControllerStateV1&
+                controllerState,
+            policy::Vec3 playerPosition,
+            LedgeCandidate& candidate) noexcept;
+        [[nodiscard]] bool tryPerformClimbJump(
+            const rock::provider::RockProviderFrameSnapshot& snapshot,
+            const PlayerAccess& access,
+            const LedgeCandidate& candidate) noexcept;
+        [[nodiscard]] bool gripsReleasedForRearm() const noexcept;
 
         [[nodiscard]] static bool tryResolveControllerAccess(
             ControllerAccess& access,
@@ -146,8 +170,15 @@ namespace rock_wall_climbing
         bool _climbing{ false };
         bool _targetPositionValid{ false };
         policy::Vec3 _targetPlayerPosition{};
+        bool _lastSafePlayerPositionValid{ false };
+        policy::Vec3 _lastSafePlayerPosition{};
         std::array<HandState, 2> _hands{};
         VelocityHistory _velocityHistory{};
+
+        bool _targetsRequireGripRelease{ false };
+        bool _penetrationRecoveryLogged{ false };
+        bool _jumpInputPrimed{ false };
+        std::uint64_t _lastJumpPressSequence{ 0 };
 
         bool _gravityOwned{ false };
         bool _gravityRestoreDeferredLogged{ false };
@@ -164,6 +195,7 @@ namespace rock_wall_climbing
         std::uint32_t _lastBlockers{ UINT32_MAX };
         std::uint32_t _lastPublishResult{ UINT32_MAX };
         std::uint32_t _lastStateResult{ UINT32_MAX };
+        std::uint32_t _lastControllerStateResult{ UINT32_MAX };
         ControllerResolveStage _lastControllerFailure{
             ControllerResolveStage::Complete
         };

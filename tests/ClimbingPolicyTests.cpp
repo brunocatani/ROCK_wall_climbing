@@ -152,6 +152,76 @@ namespace
         assert(close(isolatedBlend.pullDelta.x, 3.0f));
     }
 
+    void activityWeightKeepsMovingHandoffResponsive()
+    {
+        const float heldStationary = activityAdjustedHandWeight(
+            1.0f,
+            {},
+            false);
+        const float releasedStationary = activityAdjustedHandWeight(
+            1.0f,
+            {},
+            true);
+        const float joinedMoving = activityAdjustedHandWeight(
+            0.25f,
+            { 3.0f, 0.0f, 0.0f },
+            false);
+
+        assert(close(
+            heldStationary,
+            HELD_HAND_MINIMUM_ACTIVITY_WEIGHT));
+        assert(close(releasedStationary, 0.0f));
+        assert(close(joinedMoving, 0.25f));
+
+        const std::array<HandMotionContribution, 2> handoff{
+            HandMotionContribution{
+                true, releasedStationary, {}, {} },
+            HandMotionContribution{
+                true, joinedMoving, { 6.0f, 0.0f, 2.0f },
+                { 6.0f, 0.0f, 2.0f } },
+        };
+        const auto blend = blendHandMotions(handoff);
+        assert(blend.valid);
+        assert(close(blend.movementDelta.x, 6.0f));
+        assert(close(blend.movementDelta.z, 2.0f));
+    }
+
+    void ledgeGeometryRequiresWallFloorAndReachability()
+    {
+        Vec3 outward{};
+        assert(resolveWallOutwardNormal(
+            { -1.0f, 0.0f, 0.1f },
+            { 10.0f, 0.0f, 0.0f },
+            outward));
+        assert(outward.x > 0.99f);
+        assert(close(outward.z, 0.0f));
+        assert(!resolveWallOutwardNormal(
+            { 0.0f, 0.0f, 1.0f },
+            { 10.0f, 0.0f, 0.0f },
+            outward));
+
+        float rise = 0.0f;
+        assert(validateLedgeFloor(
+            { 0.0f, 0.0f, 1.0f },
+            68.0f,
+            0.0f,
+            72.0f,
+            rise));
+        assert(close(rise, 68.0f));
+        assert(!validateLedgeFloor(
+            { 1.0f, 0.0f, 0.0f },
+            68.0f,
+            0.0f,
+            72.0f,
+            rise));
+        assert(!validateLedgeFloor(
+            { 0.0f, 0.0f, 1.0f },
+            160.0f,
+            0.0f,
+            72.0f,
+            rise));
+    }
+
     void adaptiveSmoothingIsBoundedAndMonotonic()
     {
         const float quiet = adaptiveSmoothingSpeed(13.0f, 0.0f);
@@ -290,6 +360,8 @@ int main()
     smoothingIsFrameRateCoherent();
     joinedHandConfidenceRampsByElapsedTime();
     handMotionBlendPreservesSingleHandAndFadesInTheSecond();
+    activityWeightKeepsMovingHandoffResponsive();
+    ledgeGeometryRequiresWallFloorAndReachability();
     adaptiveSmoothingIsBoundedAndMonotonic();
     launchRejectsOpposedNoiseAndCapsSpeed();
     slowReleaseDoesNotLaunch();

@@ -44,6 +44,30 @@ namespace rock_wall_climbing
             rock::provider::RockProviderWorldRaycastResultV1& result)
             const noexcept;
 
+        [[nodiscard]] rock::provider::RockProviderResultV1
+            queryLogicalInputAction(
+                rock::provider::RockProviderLogicalInputActionV1 action,
+                rock::provider::RockProviderLogicalInputActionStateV1& state)
+                const noexcept;
+
+        [[nodiscard]] rock::provider::RockProviderResultV1
+            queryPlayerControllerState(
+                std::uint32_t queryFlags,
+                rock::provider::RockProviderPlayerControllerStateV1& state)
+                const noexcept;
+
+        [[nodiscard]] rock::provider::RockProviderResultV1
+            requestPlayerControllerJump(
+                const rock::provider::
+                    RockProviderPlayerControllerJumpRequestV1& request)
+                const noexcept;
+
+        [[nodiscard]] bool queryRawWandButtonState(
+            rock::provider::RockProviderHand hand,
+            std::uint32_t buttonId,
+            rock::provider::RockProviderRawWandButtonStateV1& state)
+            const noexcept;
+
     private:
         const rock::provider::RockProviderApi* _api{ nullptr };
         std::uint64_t _ownerToken{ 0 };
