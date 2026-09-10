@@ -92,6 +92,32 @@ namespace rock_wall_climbing
             float jumpHeightGameUnits{ 0.0f };
         };
 
+        // Fixed-size totals for one held-hand set. Normal logging emits only
+        // at handoffs and teardown; detailed telemetry also emits every 0.5 s.
+        struct MotionTrace
+        {
+            std::uint32_t frames{ 0 };
+            std::uint32_t observedFrames{ 0 };
+            std::uint32_t handMask{ 0 };
+            float seconds{ 0.0f };
+            std::array<policy::Vec3, 2> pull{};
+            std::array<float, 2> upwardPull{};
+            std::array<policy::Vec3, 2> carry{};
+            std::array<float, 2> weightSum{};
+            policy::Vec3 blendedPull{};
+            float upwardBlendedPull{ 0.0f };
+            float upwardRequested{ 0.0f };
+            float upwardSubmitted{ 0.0f };
+            policy::Vec3 requestedStep{};
+            policy::Vec3 appliedStep{};
+            policy::Vec3 observedStep{};
+            policy::Vec3 externalStep{};
+            float maximumTargetLead{ 0.0f };
+            std::uint32_t headClampedFrames{ 0 };
+            std::uint32_t raycastFailures{ 0 };
+            std::uint32_t discontinuities{ 0 };
+        };
+
         ClimbingRuntime() = default;
 
         static void ROCK_PROVIDER_CALL onRockFrame(
@@ -158,6 +184,7 @@ namespace rock_wall_climbing
             bool allowLaunch,
             const char* reason) noexcept;
         void resetLocalState() noexcept;
+        void logMotionTrace(const char* reason);
 
         [[nodiscard]] static const char* controllerStageName(
             ControllerResolveStage stage) noexcept;
@@ -199,6 +226,9 @@ namespace rock_wall_climbing
         ControllerResolveStage _lastControllerFailure{
             ControllerResolveStage::Complete
         };
-        std::uint32_t _telemetryFrames{ 0 };
+        MotionTrace _motionTrace{};
+        bool _motionPositionValid{ false };
+        policy::Vec3 _previousPlayerPosition{};
+        policy::Vec3 _previousSubmittedPosition{};
     };
 }

@@ -532,6 +532,29 @@ namespace rock_wall_climbing
             _lastControllerFailure = ControllerResolveStage::Complete;
         }
 
+        // Read back the preceding submitted step before flushing its hand set.
+        // This separates rejected pull/clamping from motion undone by the game.
+        if (_motionPositionValid) {
+            ++_motionTrace.observedFrames;
+            _motionTrace.observedStep = policy::add(
+                _motionTrace.observedStep,
+                policy::subtract(access.playerPosition, _previousPlayerPosition));
+            _motionTrace.externalStep = policy::add(
+                _motionTrace.externalStep,
+                policy::subtract(access.playerPosition, _previousSubmittedPosition));
+        }
+        const std::uint32_t currentHandMask =
+            (observed[0].held ? 1u : 0u) | (observed[1].held ? 2u : 0u);
+        if (_motionTrace.frames != 0 &&
+            _motionTrace.handMask != currentHandMask) {
+            logMotionTrace(currentHeldCount == 0 ? "release" : "handoff");
+        } else if (_config.detailedTelemetry && _motionTrace.seconds >= 0.5f) {
+            logMotionTrace("sample");
+        }
+        _previousPlayerPosition = access.playerPosition;
+        _previousSubmittedPosition = access.playerPosition;
+        _motionPositionValid = true;
+
         RockProviderPlayerControllerStateV1 controllerState{};
         const auto controllerStateResult =
             rockApiClient().queryPlayerControllerState(
@@ -601,6 +624,7 @@ namespace rock_wall_climbing
                     _penetrationRecoveryLogged = true;
                 }
                 _targetPlayerPosition = _lastSafePlayerPosition;
+                _previousSubmittedPosition = _lastSafePlayerPosition;
                 _targetPositionValid = true;
                 _velocityHistory.clear();
                 for (std::size_t index = 0; index < _hands.size(); ++index) {
@@ -657,7 +681,6 @@ namespace rock_wall_climbing
 
         std::array<policy::HandMotionContribution, 2> contributions{};
         std::uint32_t discontinuityCount = 0;
-        std::uint32_t transitionCount = 0;
         for (std::size_t index = 0; index < _hands.size(); ++index) {
             auto& hand = _hands[index];
             const auto& current = observed[index];
@@ -710,7 +733,6 @@ namespace rock_wall_climbing
                 continue;
             }
 
-            ++transitionCount;
             if (wasHeld && previous.baselineValid) {
                 policy::HandMotionInput releaseInput{};
                 releaseInput.previousHandOffset =
@@ -869,12 +891,13 @@ namespace rock_wall_climbing
 
         policy::Vec3 clampedPosition{};
         bool headClamped = false;
-        if (!tryClampHeadMotion(
-                snapshot,
-                access.playerPosition,
-                desiredPosition,
-                clampedPosition,
-                headClamped)) {
+        const bool headQuerySucceeded = tryClampHeadMotion(
+            snapshot,
+            access.playerPosition,
+            desiredPosition,
+            clampedPosition,
+            headClamped);
+        if (!headQuerySucceeded) {
             logger::warn(
                 "ROCK head-motion raycast failed; rebasing without moving this frame.");
             _targetPlayerPosition = access.playerPosition;
@@ -903,25 +926,33 @@ namespace rock_wall_climbing
             return;
         }
 
-        if (_config.detailedTelemetry && ++_telemetryFrames >= 90) {
-            _telemetryFrames = 0;
-            logger::debug(
-                "Climb frame={} hands={} transitions={} pull=({:.2f},{:.2f},{:.2f}) targetLead={:.2f} step=({:.2f},{:.2f},{:.2f}) headClamped={} history={}.",
-                snapshot.frameIndex,
-                currentHeldCount,
-                transitionCount,
-                blendedPull.x,
-                blendedPull.y,
-                blendedPull.z,
-                policy::length(policy::subtract(
-                    _targetPlayerPosition,
-                    access.playerPosition)),
-                appliedStep.x,
-                appliedStep.y,
-                appliedStep.z,
-                headClamped ? "yes" : "no",
-                _velocityHistory.size());
+        _previousSubmittedPosition = policy::lengthSquared(appliedStep) > 1.0e-6f ?
+            clampedPosition : access.playerPosition;
+        auto& trace = _motionTrace;
+        ++trace.frames;
+        trace.handMask = currentHandMask;
+        trace.seconds += snapshot.deltaSeconds;
+        for (std::size_t index = 0; index < contributions.size(); ++index) {
+            const auto& contribution = contributions[index];
+            if (contribution.valid) {
+                trace.pull[index] = policy::add(trace.pull[index], contribution.pullDelta);
+                trace.upwardPull[index] += std::max(0.0f, contribution.pullDelta.z);
+                trace.carry[index] = policy::add(trace.carry[index],
+                    policy::subtract(contribution.movementDelta, contribution.pullDelta));
+                trace.weightSum[index] += contribution.weight;
+            }
         }
+        trace.blendedPull = policy::add(trace.blendedPull, blendedPull);
+        trace.upwardBlendedPull += std::max(0.0f, blendedPull.z);
+        trace.upwardRequested += std::max(0.0f, desiredPosition.z - access.playerPosition.z);
+        trace.upwardSubmitted += std::max(0.0f, appliedStep.z);
+        trace.requestedStep = policy::add(trace.requestedStep,
+            policy::subtract(desiredPosition, access.playerPosition));
+        trace.appliedStep = policy::add(trace.appliedStep, appliedStep);
+        trace.maximumTargetLead = std::max(trace.maximumTargetLead, targetLead);
+        trace.headClampedFrames += headClamped ? 1u : 0u;
+        trace.raycastFailures += headQuerySucceeded ? 0u : 1u;
+        trace.discontinuities += discontinuityCount;
     }
 
     bool ClimbingRuntime::publishTargets(
@@ -1716,6 +1747,7 @@ namespace rock_wall_climbing
         }
 
         if (_climbing) {
+            logMotionTrace(reason);
             logger::info(
                 "Climb ended reason={} launch={} velocityGame=({:.1f},{:.1f},{:.1f}) speed={:.1f} samples={}.",
                 reason ? reason : "unknown",
@@ -1729,6 +1761,40 @@ namespace rock_wall_climbing
         resetLocalState();
     }
 
+    void ClimbingRuntime::logMotionTrace(const char* reason)
+    {
+        const auto& trace = _motionTrace;
+        if (trace.frames == 0) {
+            return;
+        }
+        const float frameCount = static_cast<float>(trace.frames);
+        logger::info(
+            "Climb motion reason={} frame={} hands=0x{:X} frames={} observedFrames={} seconds={:.3f} "
+            "rightPull=({:.2f},{:.2f},{:.2f}) leftPull=({:.2f},{:.2f},{:.2f}) "
+            "rightCarry=({:.2f},{:.2f},{:.2f}) leftCarry=({:.2f},{:.2f},{:.2f}) meanWeight=({:.3f},{:.3f}) "
+            "blendedPull=({:.2f},{:.2f},{:.2f}) requested=({:.2f},{:.2f},{:.2f}) "
+            "submitted=({:.2f},{:.2f},{:.2f}) observed=({:.2f},{:.2f},{:.2f}) external=({:.2f},{:.2f},{:.2f}) "
+            "upward(right/left/blended/requested/submitted)=({:.2f},{:.2f},{:.2f},{:.2f},{:.2f}) "
+            "maxLead={:.2f} headClamped={} rayFailures={} discontinuities={}.",
+            reason ? reason : "unknown", _lastFrameIndex, trace.handMask,
+            trace.frames, trace.observedFrames, trace.seconds,
+            trace.pull[0].x, trace.pull[0].y, trace.pull[0].z,
+            trace.pull[1].x, trace.pull[1].y, trace.pull[1].z,
+            trace.carry[0].x, trace.carry[0].y, trace.carry[0].z,
+            trace.carry[1].x, trace.carry[1].y, trace.carry[1].z,
+            trace.weightSum[0] / frameCount, trace.weightSum[1] / frameCount,
+            trace.blendedPull.x, trace.blendedPull.y, trace.blendedPull.z,
+            trace.requestedStep.x, trace.requestedStep.y, trace.requestedStep.z,
+            trace.appliedStep.x, trace.appliedStep.y, trace.appliedStep.z,
+            trace.observedStep.x, trace.observedStep.y, trace.observedStep.z,
+            trace.externalStep.x, trace.externalStep.y, trace.externalStep.z,
+            trace.upwardPull[0], trace.upwardPull[1], trace.upwardBlendedPull,
+            trace.upwardRequested, trace.upwardSubmitted,
+            trace.maximumTargetLead, trace.headClampedFrames,
+            trace.raycastFailures, trace.discontinuities);
+        _motionTrace = {};
+    }
+
     void ClimbingRuntime::resetLocalState() noexcept
     {
         _climbing = false;
@@ -1739,7 +1805,10 @@ namespace rock_wall_climbing
         _hands = {};
         _velocityHistory.clear();
         _penetrationRecoveryLogged = false;
-        _telemetryFrames = 0;
+        _motionTrace = {};
+        _motionPositionValid = false;
+        _previousPlayerPosition = {};
+        _previousSubmittedPosition = {};
     }
 
     const char* ClimbingRuntime::controllerStageName(
