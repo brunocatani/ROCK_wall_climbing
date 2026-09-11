@@ -971,6 +971,8 @@ namespace rock_wall_climbing
                 flag(allowedHand) |
                 flag(RockProviderTouchGrabTargetFlagV1::AllowTwoHands) |
                 flag(RockProviderTouchGrabTargetFlagV1::MatchAnyBody) |
+                flag(RockProviderTouchGrabTargetFlagV1::FallbackOnly) |
+                flag(RockProviderTouchGrabTargetFlagV1::ExcludePowerArmor) |
                 flag(RockProviderTouchGrabTargetFlagV1::MatchStaticMotion) |
                 flag(RockProviderTouchGrabTargetFlagV1::MatchKeyframedMotion);
             target.bodyId = INVALID_BODY_ID;
