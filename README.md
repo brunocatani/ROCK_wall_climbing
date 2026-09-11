@@ -6,7 +6,7 @@ A Fallout 4 VR addon for ROCK that lets you grab walls and pull yourself through
 
 - Climb with either hand or both, holding the same surface or separate surfaces.
 - Move hand over hand and use your climbing momentum to launch yourself when you let go.
-- Press your normal jump control near a reachable ledge to attempt a jump up. Your hold releases only when a suitable ledge and clearance are found.
+- Your final controller flick launches you automatically when the last hand lets go; there is no separate climbing jump button.
 - Follow supported moving surfaces while holding on.
 
 Climbing yields to other supported grab interactions. Power armor frames and actors in power armor are excluded as climbing surfaces.

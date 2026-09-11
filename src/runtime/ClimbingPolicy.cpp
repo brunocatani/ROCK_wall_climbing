@@ -248,55 +248,33 @@ namespace rock_wall_climbing::policy
             1.0f);
     }
 
-    bool resolveWallOutwardNormal(
-        const Vec3 contactNormal,
-        const Vec3 playerFromContact,
-        Vec3& outwardHorizontal) noexcept
+    bool slideAlongCollisionPlane(
+        const Vec3 remainingMotion,
+        const Vec3 hitNormal,
+        const Vec3 castDirection,
+        Vec3& slidingMotion) noexcept
     {
-        outwardHorizontal = {};
+        slidingMotion = {};
+        if (!finite(remainingMotion)) {
+            return false;
+        }
         Vec3 normalized{};
-        if (!tryNormalize(contactNormal, normalized) ||
-            std::abs(normalized.z) > LEDGE_MAXIMUM_WALL_NORMAL_Z) {
+        Vec3 direction{};
+        if (!tryNormalize(hitNormal, normalized) ||
+            !tryNormalize(castDirection, direction)) {
             return false;
         }
-        Vec3 horizontal{ normalized.x, normalized.y, 0.0f };
-        if (!tryNormalize(horizontal, horizontal)) {
+        if (dot(normalized, direction) > 0.0f) {
+            normalized = scale(normalized, -1.0f);
+        }
+        const float intoSurface = dot(remainingMotion, normalized);
+        slidingMotion = intoSurface < 0.0f ?
+            subtract(remainingMotion, scale(normalized, intoSurface)) :
+            remainingMotion;
+        if (!finite(slidingMotion)) {
+            slidingMotion = {};
             return false;
         }
-        if (dot(horizontal, playerFromContact) < 0.0f) {
-            horizontal = scale(horizontal, -1.0f);
-        }
-        outwardHorizontal = horizontal;
-        return true;
-    }
-
-    bool validateLedgeFloor(
-        const Vec3 floorNormal,
-        const float floorHeight,
-        const float playerHeight,
-        const float contactHeight,
-        float& rise) noexcept
-    {
-        rise = 0.0f;
-        Vec3 normalized{};
-        if (!tryNormalize(floorNormal, normalized) ||
-            normalized.z < LEDGE_MINIMUM_FLOOR_NORMAL_Z ||
-            !std::isfinite(floorHeight) ||
-            !std::isfinite(playerHeight) ||
-            !std::isfinite(contactHeight)) {
-            return false;
-        }
-        const float floorFromContact = floorHeight - contactHeight;
-        if (floorFromContact < -LEDGE_MAXIMUM_FLOOR_BELOW_CONTACT_GAME ||
-            floorFromContact > LEDGE_MAXIMUM_FLOOR_ABOVE_CONTACT_GAME) {
-            return false;
-        }
-        const float candidateRise = floorHeight - playerHeight;
-        if (candidateRise < LEDGE_MINIMUM_RISE_GAME ||
-            candidateRise > LEDGE_MAXIMUM_RISE_GAME) {
-            return false;
-        }
-        rise = candidateRise;
         return true;
     }
 
@@ -420,5 +398,34 @@ namespace rock_wall_climbing::policy
         velocity.z *= settings.multiplier;
         velocity = clampMagnitude(velocity, settings.maximumSpeed);
         return length(velocity) >= settings.minimumSpeed ? velocity : Vec3{};
+    }
+
+    Vec3 addLaunchImpulse(
+        const Vec3 currentVelocity,
+        const Vec3 launchImpulse,
+        const float maximumSpeed) noexcept
+    {
+        if (!finite(currentVelocity) || !finite(launchImpulse) ||
+            !std::isfinite(maximumSpeed) || maximumSpeed <= 0.0f) {
+            return {};
+        }
+        return clampMagnitude(add(currentVelocity, launchImpulse), maximumSpeed);
+    }
+
+    float nativeJumpHeightForVelocity(
+        const float upwardVelocity,
+        const float gravityScalar) noexcept
+    {
+        if (!std::isfinite(upwardVelocity) || upwardVelocity <= 0.0f ||
+            !std::isfinite(gravityScalar) || gravityScalar <= 0.0f) {
+            return 0.0f;
+        }
+        const float acceleration =
+            gravityScalar * CHARACTER_GRAVITY_ACCELERATION_SCALE;
+        const float height =
+            upwardVelocity * upwardVelocity / (2.0f * acceleration);
+        return std::isfinite(height) ?
+            std::clamp(height, 0.0f, MAXIMUM_NATIVE_JUMP_HEIGHT_GAME) :
+            0.0f;
     }
 }

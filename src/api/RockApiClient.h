@@ -45,12 +45,6 @@ namespace rock_wall_climbing
             const noexcept;
 
         [[nodiscard]] rock::provider::RockProviderResultV1
-            queryLogicalInputAction(
-                rock::provider::RockProviderLogicalInputActionV1 action,
-                rock::provider::RockProviderLogicalInputActionStateV1& state)
-                const noexcept;
-
-        [[nodiscard]] rock::provider::RockProviderResultV1
             queryPlayerControllerState(
                 std::uint32_t queryFlags,
                 rock::provider::RockProviderPlayerControllerStateV1& state)

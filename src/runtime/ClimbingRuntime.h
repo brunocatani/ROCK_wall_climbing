@@ -82,16 +82,6 @@ namespace rock_wall_climbing
             policy::Vec3 normal{};
         };
 
-        struct LedgeCandidate
-        {
-            bool valid{ false };
-            policy::Vec3 floorPoint{};
-            policy::Vec3 floorNormal{};
-            policy::Vec3 outwardHorizontal{};
-            float riseGameUnits{ 0.0f };
-            float jumpHeightGameUnits{ 0.0f };
-        };
-
         // Fixed-size totals for one held-hand set. Normal logging emits only
         // at handoffs and teardown; detailed telemetry also emits every 0.5 s.
         struct MotionTrace
@@ -114,8 +104,24 @@ namespace rock_wall_climbing
             policy::Vec3 externalStep{};
             float maximumTargetLead{ 0.0f };
             std::uint32_t headClampedFrames{ 0 };
+            std::uint32_t headSlidePasses{ 0 };
             std::uint32_t raycastFailures{ 0 };
             std::uint32_t discontinuities{ 0 };
+        };
+
+        struct LaunchObservation
+        {
+            bool active{ false };
+            bool firstVelocityValid{ false };
+            bool nativeJumpRequested{ false };
+            std::uint64_t startFrameIndex{ 0 };
+            std::uint32_t frames{ 0 };
+            std::uint32_t validFrames{ 0 };
+            std::uint32_t supportedFrames{ 0 };
+            std::uint32_t lastResult{ 0 };
+            policy::Vec3 requestedVelocity{};
+            policy::Vec3 firstVelocity{};
+            policy::Vec3 lastVelocity{};
         };
 
         ClimbingRuntime() = default;
@@ -139,23 +145,19 @@ namespace rock_wall_climbing
             std::array<ObservedHand, 2>& observed,
             bool& invalidated) noexcept;
 
-        [[nodiscard]] bool tryClampHeadMotion(
+        [[nodiscard]] bool tryResolveHeadMotion(
             const rock::provider::RockProviderFrameSnapshot& snapshot,
             policy::Vec3 currentPlayerPosition,
             policy::Vec3 desiredPlayerPosition,
-            policy::Vec3& clampedPlayerPosition,
-            bool& wasClamped) noexcept;
-        [[nodiscard]] bool tryFindLedgeCandidate(
-            const rock::provider::RockProviderFrameSnapshot& snapshot,
-            const std::array<ObservedHand, 2>& observed,
-            const rock::provider::RockProviderPlayerControllerStateV1&
-                controllerState,
-            policy::Vec3 playerPosition,
-            LedgeCandidate& candidate) noexcept;
-        [[nodiscard]] bool tryPerformClimbJump(
-            const rock::provider::RockProviderFrameSnapshot& snapshot,
-            const PlayerAccess& access,
-            const LedgeCandidate& candidate) noexcept;
+            policy::Vec3& resolvedPlayerPosition,
+            bool& wasConstrained,
+            std::uint32_t& slidePasses) noexcept;
+        void observeLaunchReadback(
+            std::uint64_t frameIndex,
+            rock::provider::RockProviderResultV1 result,
+            const rock::provider::RockProviderPlayerControllerStateV1& state,
+            bool stateValid) noexcept;
+        void finishLaunchObservation(const char* reason) noexcept;
         [[nodiscard]] bool gripsReleasedForRearm() const noexcept;
 
         [[nodiscard]] static bool tryResolveControllerAccess(
@@ -204,8 +206,7 @@ namespace rock_wall_climbing
 
         bool _targetsRequireGripRelease{ false };
         bool _penetrationRecoveryLogged{ false };
-        bool _jumpInputPrimed{ false };
-        std::uint64_t _lastJumpPressSequence{ 0 };
+        LaunchObservation _launchObservation{};
 
         bool _gravityOwned{ false };
         bool _gravityRestoreDeferredLogged{ false };

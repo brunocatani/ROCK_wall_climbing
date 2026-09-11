@@ -23,9 +23,6 @@ namespace rock_wall_climbing
                     HandInteractionState) |
             static_cast<std::uint32_t>(
                 rock::provider::RockProviderConsumerCapabilityV1::
-                    InputObservability) |
-            static_cast<std::uint32_t>(
-                rock::provider::RockProviderConsumerCapabilityV1::
                     PlayerController);
     }
 
@@ -65,7 +62,6 @@ namespace rock_wall_climbing
             !rock::provider::supportsHandInteractionStateV1() ||
             !rock::provider::supportsTouchGrabTargetsV1() ||
             !rock::provider::supportsWorldRaycastsV1() ||
-            !rock::provider::supportsLogicalInputActionStateV1() ||
             !rock::provider::supportsPlayerControllerStateV1() ||
             !rock::provider::supportsPlayerControllerJumpV1() ||
             !_api->registerConsumerV1 ||
@@ -78,11 +74,10 @@ namespace rock_wall_climbing
             !_api->getHandInteractionStateV1 ||
             !_api->queryWorldRaycastV1 ||
             !_api->getRawWandButtonStateV1 ||
-            !_api->getLogicalInputActionStateV1 ||
             !_api->getPlayerControllerStateV1 ||
             !_api->requestPlayerControllerJumpV1) {
             logger::error(
-                "Loaded ROCK V1 provider lacks the complete climbing contract (snapshots, touch grabs, raycasts, logical input, and guarded player-controller access).");
+                "Loaded ROCK V1 provider lacks the complete climbing contract (snapshots, touch grabs, raycasts, and guarded player-controller access).");
             _api = nullptr;
             return false;
         }
@@ -242,22 +237,6 @@ namespace rock_wall_climbing
             _ownerToken,
             &request,
             &result);
-    }
-
-    rock::provider::RockProviderResultV1
-        RockApiClient::queryLogicalInputAction(
-            const rock::provider::RockProviderLogicalInputActionV1 action,
-            rock::provider::RockProviderLogicalInputActionStateV1& state)
-            const noexcept
-    {
-        state = {};
-        if (!ready()) {
-            return rock::provider::RockProviderResultV1::NotReady;
-        }
-        return _api->getLogicalInputActionStateV1(
-            _ownerToken,
-            action,
-            &state);
     }
 
     rock::provider::RockProviderResultV1

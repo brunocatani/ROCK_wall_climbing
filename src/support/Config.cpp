@@ -125,7 +125,7 @@ namespace rock_wall_climbing
             "Launch", "bEnabled", launch.enabled);
         launch.historySeconds = readClampedFloat(
             ini, "Launch", "fVelocityHistorySeconds",
-            launch.historySeconds, 0.18f, 0.03f, 0.5f);
+            launch.historySeconds, 0.10f, 0.03f, 0.5f);
         launch.directionFilterDegrees = readClampedFloat(
             ini, "Launch", "fDirectionFilterDegrees",
             launch.directionFilterDegrees, 75.0f, 0.0f, 180.0f);

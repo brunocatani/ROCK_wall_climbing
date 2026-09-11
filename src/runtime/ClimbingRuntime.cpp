@@ -31,14 +31,8 @@ namespace rock_wall_climbing
         constexpr std::uint32_t INVALID_BODY_ID = 0x7FFF'FFFFu;
         constexpr float MAXIMUM_FRAME_DELTA_SECONDS = 0.1f;
         constexpr std::uint32_t PHYSICAL_GRAB_BUTTON_ID = 2;
-        constexpr float LEDGE_MINIMUM_INWARD_PROBE_GAME = 24.0f;
-        constexpr float LEDGE_INWARD_RADIUS_PADDING_GAME = 10.0f;
-        constexpr float LEDGE_PROBE_ABOVE_CONTACT_GAME = 48.0f;
-        constexpr float LEDGE_MINIMUM_DOWN_PROBE_GAME = 112.0f;
-        constexpr float LEDGE_HEADROOM_PADDING_GAME = 8.0f;
-        constexpr float LEDGE_JUMP_MINIMUM_HEIGHT_GAME = 72.0f;
-        constexpr float LEDGE_JUMP_RISE_MARGIN_GAME = 36.0f;
-        constexpr float LEDGE_JUMP_MAXIMUM_HEIGHT_GAME = 128.0f;
+        constexpr std::uint32_t MAXIMUM_HEAD_MOTION_PASSES = 3;
+        constexpr std::uint32_t LAUNCH_OBSERVATION_FRAMES = 8;
 
         static_assert(
             offsetof(RE::bhkCharacterController, gravity) == 0x330,
@@ -88,6 +82,13 @@ namespace rock_wall_climbing
         [[nodiscard]] constexpr bool hasControllerStateFlag(
             const std::uint32_t flags,
             const RockProviderPlayerControllerStateFlagV1 value) noexcept
+        {
+            return (flags & static_cast<std::uint32_t>(value)) != 0;
+        }
+
+        [[nodiscard]] constexpr bool hasWorldRaycastResultFlag(
+            const std::uint32_t flags,
+            const RockProviderWorldRaycastResultFlagV1 value) noexcept
         {
             return (flags & static_cast<std::uint32_t>(value)) != 0;
         }
@@ -239,8 +240,7 @@ namespace rock_wall_climbing
             static_cast<void>(_config.reload());
             _sessionActive = true;
             _targetsRequireGripRelease = false;
-            _jumpInputPrimed = false;
-            _lastJumpPressSequence = 0;
+            _launchObservation = {};
             _lastBlockers = UINT32_MAX;
             static_cast<void>(connect());
         } catch (const std::exception& error) {
@@ -264,8 +264,7 @@ namespace rock_wall_climbing
         _providerGeneration = 0;
         _lastFrameIndex = 0;
         _targetsRequireGripRelease = false;
-        _jumpInputPrimed = false;
-        _lastJumpPressSequence = 0;
+        _launchObservation = {};
         _lastBlockers = UINT32_MAX;
     }
 
@@ -426,7 +425,7 @@ namespace rock_wall_climbing
         const std::uint32_t blockers = snapshotBlockers(snapshot);
         observeBlockers(blockers);
         if (blockers != 0) {
-            _jumpInputPrimed = false;
+            finishLaunchObservation("operational-gate");
             finishClimb(nullptr, 0.0f, false, "operational-gate");
             clearTargets();
             return;
@@ -444,7 +443,7 @@ namespace rock_wall_climbing
             _skeletonGeneration = snapshot.skeletonGeneration;
             _providerGeneration = snapshot.providerGeneration;
             static_cast<void>(nextTargetGeneration());
-            _jumpInputPrimed = false;
+            finishLaunchObservation("provider-generation");
             logger::info(
                 "Climbing generations changed to world={} skeleton={} provider={} targetGeneration={}.",
                 _worldGeneration,
@@ -488,28 +487,11 @@ namespace rock_wall_climbing
             return;
         }
 
-        bool jumpPressed = false;
-        RockProviderLogicalInputActionStateV1 jumpState{};
-        const auto jumpStateResult =
-            rockApiClient().queryLogicalInputAction(
-                RockProviderLogicalInputActionV1::Jump,
-                jumpState);
-        if (jumpStateResult == RockProviderResultV1::Ok) {
-            if (_jumpInputPrimed && jumpState.available != 0 &&
-                jumpState.pressSequence != 0 &&
-                jumpState.pressSequence != _lastJumpPressSequence) {
-                jumpPressed = true;
-            }
-            _lastJumpPressSequence = jumpState.pressSequence;
-            _jumpInputPrimed = true;
-        } else {
-            _jumpInputPrimed = false;
-        }
-
         const std::uint32_t currentHeldCount =
             static_cast<std::uint32_t>(observed[0].held) +
             static_cast<std::uint32_t>(observed[1].held);
-        if (currentHeldCount == 0 && !_climbing && !_gravityOwned) {
+        if (currentHeldCount == 0 && !_climbing && !_gravityOwned &&
+            !_launchObservation.active) {
             _hands = {};
             return;
         }
@@ -578,20 +560,25 @@ namespace rock_wall_climbing
                 snapshot.skeletonGeneration &&
             controllerState.providerGeneration ==
                 snapshot.providerGeneration;
+        observeLaunchReadback(
+            snapshot.frameIndex,
+            controllerStateResult,
+            controllerState,
+            controllerStateValid);
         if (!controllerStateValid) {
             const std::uint32_t failureKey =
                 static_cast<std::uint32_t>(controllerStateResult) |
                 (controllerState.flags << 8);
             if (failureKey != _lastControllerStateResult) {
                 logger::warn(
-                    "ROCK player-controller state unavailable or stale (result={} flags=0x{:03X}); ledge and penetration assistance are disabled while the existing surface latch remains active.",
+                    "ROCK player-controller state unavailable or stale (result={} flags=0x{:03X}); penetration and release-jump state assistance are disabled while the existing surface latch remains active.",
                     static_cast<std::uint32_t>(controllerStateResult),
                     controllerState.flags);
                 _lastControllerStateResult = failureKey;
             }
             // Controller telemetry augments the established climbing path. A
-            // provider readback fault must disable only ledge/penetration
-            // assistance; it must never destroy an already-valid ROCK latch.
+            // Provider readback augments penetration recovery and native
+            // release-jump admission; it must never destroy a valid latch.
             _lastSafePlayerPositionValid = false;
             _penetrationRecoveryLogged = false;
         } else {
@@ -600,8 +587,8 @@ namespace rock_wall_climbing
             const bool penetrating = hasControllerStateFlag(
                 controllerState.flags,
                 RockProviderPlayerControllerStateFlagV1::Penetrating);
-            if (penetrating) {
-                if (!_climbing || !_lastSafePlayerPositionValid ||
+            if (_climbing && penetrating) {
+                if (!_lastSafePlayerPositionValid ||
                     !suspendGravity(access) ||
                     !trySetVelocity(access, {}) ||
                     !trySetPlayerPosition(
@@ -646,9 +633,16 @@ namespace rock_wall_climbing
                 }
                 return;
             }
-            _penetrationRecoveryLogged = false;
-            _lastSafePlayerPosition = access.playerPosition;
-            _lastSafePlayerPositionValid = true;
+            if (_climbing) {
+                _penetrationRecoveryLogged = false;
+                _lastSafePlayerPosition = access.playerPosition;
+                _lastSafePlayerPositionValid = true;
+            }
+        }
+
+        if (currentHeldCount == 0 && !_climbing && !_gravityOwned) {
+            _hands = {};
+            return;
         }
 
         const std::array<policy::Vec3, 2> currentHandOffsets{
@@ -857,21 +851,6 @@ namespace rock_wall_climbing
                 motionBlend.movementDelta);
         }
 
-        if (jumpPressed) {
-            LedgeCandidate candidate{};
-            if (tryFindLedgeCandidate(
-                    snapshot,
-                    observed,
-                    controllerState,
-                    access.playerPosition,
-                    candidate) &&
-                tryPerformClimbJump(snapshot, access, candidate)) {
-                return;
-            }
-            logger::info(
-                "Climb Jump press retained the wall hold because no safe, reachable ledge jump was committed.");
-        }
-
         const float targetLead = policy::length(policy::subtract(
             _targetPlayerPosition,
             access.playerPosition));
@@ -891,12 +870,14 @@ namespace rock_wall_climbing
 
         policy::Vec3 clampedPosition{};
         bool headClamped = false;
-        const bool headQuerySucceeded = tryClampHeadMotion(
+        std::uint32_t headSlidePasses = 0;
+        const bool headQuerySucceeded = tryResolveHeadMotion(
             snapshot,
             access.playerPosition,
             desiredPosition,
             clampedPosition,
-            headClamped);
+            headClamped,
+            headSlidePasses);
         if (!headQuerySucceeded) {
             logger::warn(
                 "ROCK head-motion raycast failed; rebasing without moving this frame.");
@@ -951,6 +932,7 @@ namespace rock_wall_climbing
         trace.appliedStep = policy::add(trace.appliedStep, appliedStep);
         trace.maximumTargetLead = std::max(trace.maximumTargetLead, targetLead);
         trace.headClampedFrames += headClamped ? 1u : 0u;
+        trace.headSlidePasses += headSlidePasses;
         trace.raycastFailures += headQuerySucceeded ? 0u : 1u;
         trace.discontinuities += discontinuityCount;
     }
@@ -1169,224 +1151,179 @@ namespace rock_wall_climbing
         return true;
     }
 
-    bool ClimbingRuntime::tryClampHeadMotion(
+    bool ClimbingRuntime::tryResolveHeadMotion(
         const RockProviderFrameSnapshot& snapshot,
         const policy::Vec3 currentPlayerPosition,
         const policy::Vec3 desiredPlayerPosition,
-        policy::Vec3& clampedPlayerPosition,
-        bool& wasClamped) noexcept
+        policy::Vec3& resolvedPlayerPosition,
+        bool& wasConstrained,
+        std::uint32_t& slidePasses) noexcept
     {
-        clampedPlayerPosition = currentPlayerPosition;
-        wasClamped = false;
-        const policy::Vec3 step = policy::subtract(
+        resolvedPlayerPosition = currentPlayerPosition;
+        wasConstrained = false;
+        slidePasses = 0;
+        const policy::Vec3 requestedStep = policy::subtract(
             desiredPlayerPosition,
             currentPlayerPosition);
-        const float distance = policy::length(step);
-        if (distance <= 1.0e-4f) {
+        if (!policy::finite(requestedStep)) {
+            return false;
+        }
+        if (policy::lengthSquared(requestedStep) <= 1.0e-8f) {
             return true;
-        }
-
-        RockProviderWorldRaycastRequestV1 request{};
-        request.startGame = providerPoint(
-            translation(snapshot.hmdTransform));
-        request.directionGame = providerPoint(
-            policy::divide(step, distance));
-        request.maxDistanceGame =
-            distance + _config.headClearanceGameUnits;
-        request.worldGeneration = snapshot.worldGeneration;
-        request.skeletonGeneration = snapshot.skeletonGeneration;
-        request.providerGeneration = snapshot.providerGeneration;
-
-        RockProviderWorldRaycastResultV1 result{};
-        const auto queryResult = rockApiClient().queryWorldRaycast(
-            request,
-            result);
-        if (queryResult != RockProviderResultV1::Ok) {
-            return false;
-        }
-
-        float allowedDistance = distance;
-        if (result.hit != 0 &&
-            std::isfinite(result.hitDistanceGame) &&
-            result.hitDistanceGame >= 0.0f) {
-            allowedDistance = std::clamp(
-                result.hitDistanceGame -
-                    _config.headClearanceGameUnits,
-                0.0f,
-                distance);
-            wasClamped = allowedDistance + 1.0e-4f < distance;
-        }
-        clampedPlayerPosition = policy::add(
-            currentPlayerPosition,
-            policy::scale(
-                policy::divide(step, distance),
-                allowedDistance));
-        return validCoordinate(clampedPlayerPosition);
-    }
-
-    bool ClimbingRuntime::tryFindLedgeCandidate(
-        const RockProviderFrameSnapshot& snapshot,
-        const std::array<ObservedHand, 2>& observed,
-        const RockProviderPlayerControllerStateV1& controllerState,
-        const policy::Vec3 playerPosition,
-        LedgeCandidate& candidate) noexcept
-    {
-        candidate = {};
-        if (!hasControllerStateFlag(
-                controllerState.flags,
-                RockProviderPlayerControllerStateFlagV1::ShapeValid) ||
-            !std::isfinite(controllerState.radiusGame) ||
-            !std::isfinite(controllerState.heightGame) ||
-            controllerState.radiusGame <= 0.0f ||
-            controllerState.heightGame <= 0.0f) {
-            return false;
         }
 
         const policy::Vec3 hmdPosition =
             translation(snapshot.hmdTransform);
-        bool wallFound = false;
-        policy::Vec3 selectedAnchor{};
-        policy::Vec3 selectedOutward{};
-        for (const auto& hand : observed) {
-            if (!hand.held || !hand.anchorValid || !hand.normalValid) {
-                continue;
+        policy::Vec3 appliedStep{};
+        policy::Vec3 remainingStep = requestedStep;
+        for (std::uint32_t pass = 0;
+             pass < MAXIMUM_HEAD_MOTION_PASSES;
+             ++pass) {
+            const float distance = policy::length(remainingStep);
+            if (distance <= 1.0e-4f) {
+                remainingStep = {};
+                break;
             }
-            policy::Vec3 outward{};
-            if (!policy::resolveWallOutwardNormal(
-                    hand.normal,
-                    policy::subtract(hmdPosition, hand.anchor),
-                    outward)) {
-                continue;
+            const policy::Vec3 direction =
+                policy::divide(remainingStep, distance);
+
+            RockProviderWorldRaycastRequestV1 request{};
+            request.startGame = providerPoint(
+                policy::add(hmdPosition, appliedStep));
+            request.directionGame = providerPoint(direction);
+            request.maxDistanceGame =
+                distance + _config.headClearanceGameUnits;
+            request.worldGeneration = snapshot.worldGeneration;
+            request.skeletonGeneration = snapshot.skeletonGeneration;
+            request.providerGeneration = snapshot.providerGeneration;
+
+            RockProviderWorldRaycastResultV1 result{};
+            if (rockApiClient().queryWorldRaycast(request, result) !=
+                RockProviderResultV1::Ok) {
+                return false;
             }
-            if (!wallFound || hand.anchor.z > selectedAnchor.z) {
-                wallFound = true;
-                selectedAnchor = hand.anchor;
-                selectedOutward = outward;
+
+            const bool hit = result.hit != 0;
+            if (!hit) {
+                appliedStep = policy::add(appliedStep, remainingStep);
+                remainingStep = {};
+                break;
             }
-        }
-        if (!wallFound) {
-            return false;
-        }
+            if (!std::isfinite(result.hitDistanceGame) ||
+                result.hitDistanceGame < 0.0f) {
+                return false;
+            }
 
-        const float inwardDistance = (std::max)(
-            LEDGE_MINIMUM_INWARD_PROBE_GAME,
-            controllerState.radiusGame +
-                LEDGE_INWARD_RADIUS_PADDING_GAME);
-        policy::Vec3 probeStart = policy::add(
-            selectedAnchor,
-            policy::scale(selectedOutward, -inwardDistance));
-        probeStart.z += LEDGE_PROBE_ABOVE_CONTACT_GAME;
-        if (!validCoordinate(probeStart)) {
-            return false;
-        }
+            const float allowedDistance = std::clamp(
+                result.hitDistanceGame - _config.headClearanceGameUnits,
+                0.0f,
+                distance);
+            const policy::Vec3 traveled =
+                policy::scale(direction, allowedDistance);
+            appliedStep = policy::add(appliedStep, traveled);
+            remainingStep = policy::subtract(remainingStep, traveled);
+            wasConstrained = true;
+            if (allowedDistance + 1.0e-4f >= distance) {
+                remainingStep = {};
+                break;
+            }
 
-        RockProviderWorldRaycastRequestV1 floorRequest{};
-        floorRequest.startGame = providerPoint(probeStart);
-        floorRequest.directionGame = { 0.0f, 0.0f, -1.0f };
-        floorRequest.maxDistanceGame = (std::max)(
-            LEDGE_MINIMUM_DOWN_PROBE_GAME,
-            controllerState.heightGame +
-                2.0f * controllerState.radiusGame +
-                LEDGE_PROBE_ABOVE_CONTACT_GAME);
-        floorRequest.worldGeneration = snapshot.worldGeneration;
-        floorRequest.skeletonGeneration = snapshot.skeletonGeneration;
-        floorRequest.providerGeneration = snapshot.providerGeneration;
-
-        RockProviderWorldRaycastResultV1 floorResult{};
-        if (rockApiClient().queryWorldRaycast(
-                floorRequest,
-                floorResult) != RockProviderResultV1::Ok ||
-            floorResult.hit == 0) {
-            return false;
-        }
-        const policy::Vec3 floorPoint = point(floorResult.hitPointGame);
-        const policy::Vec3 floorNormal = point(floorResult.hitNormalGame);
-        float rise = 0.0f;
-        if (!validCoordinate(floorPoint) ||
-            !policy::validateLedgeFloor(
-                floorNormal,
-                floorPoint.z,
-                playerPosition.z,
-                selectedAnchor.z,
-                rise)) {
-            return false;
+            const policy::Vec3 hitNormal = point(result.hitNormalGame);
+            policy::Vec3 slidingMotion{};
+            if (!hasWorldRaycastResultFlag(
+                    result.flags,
+                    RockProviderWorldRaycastResultFlagV1::NormalValid) ||
+                !policy::slideAlongCollisionPlane(
+                    remainingStep,
+                    hitNormal,
+                    direction,
+                    slidingMotion)) {
+                remainingStep = {};
+                break;
+            }
+            if (policy::lengthSquared(slidingMotion) + 1.0e-6f >=
+                policy::lengthSquared(remainingStep)) {
+                remainingStep = {};
+                break;
+            }
+            remainingStep = slidingMotion;
+            ++slidePasses;
         }
 
-        policy::Vec3 headroomStart = floorPoint;
-        headroomStart.z += 2.0f;
-        RockProviderWorldRaycastRequestV1 headroomRequest{};
-        headroomRequest.startGame = providerPoint(headroomStart);
-        headroomRequest.directionGame = { 0.0f, 0.0f, 1.0f };
-        headroomRequest.maxDistanceGame =
-            controllerState.heightGame +
-            2.0f * controllerState.radiusGame +
-            LEDGE_HEADROOM_PADDING_GAME;
-        headroomRequest.worldGeneration = snapshot.worldGeneration;
-        headroomRequest.skeletonGeneration = snapshot.skeletonGeneration;
-        headroomRequest.providerGeneration = snapshot.providerGeneration;
-
-        RockProviderWorldRaycastResultV1 headroomResult{};
-        if (rockApiClient().queryWorldRaycast(
-                headroomRequest,
-                headroomResult) != RockProviderResultV1::Ok ||
-            headroomResult.hit != 0) {
-            return false;
-        }
-
-        candidate.valid = true;
-        candidate.floorPoint = floorPoint;
-        candidate.floorNormal = floorNormal;
-        candidate.outwardHorizontal = selectedOutward;
-        candidate.riseGameUnits = rise;
-        candidate.jumpHeightGameUnits = std::clamp(
-            rise + LEDGE_JUMP_RISE_MARGIN_GAME,
-            LEDGE_JUMP_MINIMUM_HEIGHT_GAME,
-            LEDGE_JUMP_MAXIMUM_HEIGHT_GAME);
-        return true;
+        resolvedPlayerPosition = policy::add(
+            currentPlayerPosition,
+            appliedStep);
+        wasConstrained = wasConstrained ||
+            policy::lengthSquared(policy::subtract(
+                appliedStep,
+                requestedStep)) > 1.0e-6f;
+        return validCoordinate(resolvedPlayerPosition);
     }
 
-    bool ClimbingRuntime::tryPerformClimbJump(
-        const RockProviderFrameSnapshot& snapshot,
-        const PlayerAccess& access,
-        const LedgeCandidate& candidate) noexcept
+    void ClimbingRuntime::observeLaunchReadback(
+        const std::uint64_t frameIndex,
+        const RockProviderResultV1 result,
+        const RockProviderPlayerControllerStateV1& state,
+        const bool stateValid) noexcept
     {
-        if (!candidate.valid ||
-            !std::isfinite(candidate.jumpHeightGameUnits)) {
-            return false;
+        auto& observation = _launchObservation;
+        if (!observation.active ||
+            frameIndex <= observation.startFrameIndex) {
+            return;
         }
 
-        RockProviderPlayerControllerJumpRequestV1 request{};
-        request.heightGameUnits = candidate.jumpHeightGameUnits;
-        request.worldGeneration = snapshot.worldGeneration;
-        request.skeletonGeneration = snapshot.skeletonGeneration;
-        request.providerGeneration = snapshot.providerGeneration;
-        const auto result =
-            rockApiClient().requestPlayerControllerJump(request);
-        if (result != RockProviderResultV1::Ok) {
-            logger::warn(
-                "ROCK rejected the guarded climb-jump request: result={} rise={:.1f} height={:.1f}.",
-                static_cast<std::uint32_t>(result),
-                candidate.riseGameUnits,
-                candidate.jumpHeightGameUnits);
-            return false;
+        ++observation.frames;
+        observation.lastResult = static_cast<std::uint32_t>(result);
+        const bool velocityValid = stateValid &&
+            hasControllerStateFlag(
+                state.flags,
+                RockProviderPlayerControllerStateFlagV1::VelocityValid);
+        if (velocityValid) {
+            const policy::Vec3 velocity = point(state.velocityGame);
+            if (policy::finite(velocity)) {
+                if (!observation.firstVelocityValid) {
+                    observation.firstVelocity = velocity;
+                    observation.firstVelocityValid = true;
+                }
+                observation.lastVelocity = velocity;
+                ++observation.validFrames;
+                observation.supportedFrames += hasControllerStateFlag(
+                    state.flags,
+                    RockProviderPlayerControllerStateFlagV1::Supported) ?
+                    1u : 0u;
+            }
         }
 
-        finishClimb(
-            &access,
-            snapshot.gameToHavokScale,
-            false,
-            "ledge-jump");
-        clearTargets();
-        _targetsRequireGripRelease = true;
-        static_cast<void>(nextTargetGeneration());
+        if (observation.frames >= LAUNCH_OBSERVATION_FRAMES) {
+            finishLaunchObservation("window-complete");
+        }
+    }
+
+    void ClimbingRuntime::finishLaunchObservation(
+        const char* reason) noexcept
+    {
+        const auto observation = _launchObservation;
+        if (!observation.active) {
+            return;
+        }
         logger::info(
-            "Committed native climb jump toward a verified ledge floor=({:.1f},{:.1f},{:.1f}) rise={:.1f} height={:.1f}; targets remain disarmed until both grabs release.",
-            candidate.floorPoint.x,
-            candidate.floorPoint.y,
-            candidate.floorPoint.z,
-            candidate.riseGameUnits,
-            candidate.jumpHeightGameUnits);
-        return true;
+            "Launch readback reason={} frames={} valid={} supported={} nativeJump={} requested=({:.1f},{:.1f},{:.1f}) first=({:.1f},{:.1f},{:.1f}) last=({:.1f},{:.1f},{:.1f}) result={}.",
+            reason ? reason : "unknown",
+            observation.frames,
+            observation.validFrames,
+            observation.supportedFrames,
+            observation.nativeJumpRequested ? "accepted" : "not-accepted",
+            observation.requestedVelocity.x,
+            observation.requestedVelocity.y,
+            observation.requestedVelocity.z,
+            observation.firstVelocity.x,
+            observation.firstVelocity.y,
+            observation.firstVelocity.z,
+            observation.lastVelocity.x,
+            observation.lastVelocity.y,
+            observation.lastVelocity.z,
+            observation.lastResult);
+        _launchObservation = {};
     }
 
     bool ClimbingRuntime::gripsReleasedForRearm() const noexcept
@@ -1718,7 +1655,7 @@ namespace rock_wall_climbing
             samples{};
         const auto chronological =
             _velocityHistory.copyChronological(samples);
-        const policy::Vec3 launchGame =
+        const policy::Vec3 launchImpulseGame =
             allowLaunch && currentAccess &&
                     std::isfinite(gameToHavokScale) &&
                     gameToHavokScale > 0.0f ?
@@ -1727,13 +1664,78 @@ namespace rock_wall_climbing
                     _config.launch) :
                 policy::Vec3{};
 
+        RockProviderPlayerControllerStateV1 controllerState{};
+        RockProviderResultV1 controllerStateResult =
+            RockProviderResultV1::NotReady;
+        bool controllerStateValid = false;
+        policy::Vec3 currentVelocityGame{};
+        if (policy::lengthSquared(launchImpulseGame) > 1.0e-6f &&
+            currentAccess) {
+            controllerStateResult = rockApiClient().queryPlayerControllerState(
+                static_cast<std::uint32_t>(
+                    RockProviderPlayerControllerQueryFlagV1::
+                        CheckPenetration),
+                controllerState);
+            controllerStateValid =
+                controllerStateResult == RockProviderResultV1::Ok &&
+                hasControllerStateFlag(
+                    controllerState.flags,
+                    RockProviderPlayerControllerStateFlagV1::Valid) &&
+                hasControllerStateFlag(
+                    controllerState.flags,
+                    RockProviderPlayerControllerStateFlagV1::VelocityValid) &&
+                hasControllerStateFlag(
+                    controllerState.flags,
+                    RockProviderPlayerControllerStateFlagV1::
+                        PenetrationChecked) &&
+                !hasControllerStateFlag(
+                    controllerState.flags,
+                    RockProviderPlayerControllerStateFlagV1::Penetrating) &&
+                controllerState.worldGeneration == _worldGeneration &&
+                controllerState.skeletonGeneration == _skeletonGeneration &&
+                controllerState.providerGeneration == _providerGeneration;
+            if (controllerStateValid) {
+                currentVelocityGame = point(controllerState.velocityGame);
+                controllerStateValid = policy::finite(currentVelocityGame);
+            }
+        }
+
+        const policy::Vec3 launchVelocityGame =
+            policy::lengthSquared(launchImpulseGame) > 1.0e-6f ?
+                policy::addLaunchImpulse(
+                    controllerStateValid ? currentVelocityGame : policy::Vec3{},
+                    launchImpulseGame,
+                    _config.launch.maximumSpeed) :
+                policy::Vec3{};
+        const float nativeJumpHeight = policy::nativeJumpHeightForVelocity(
+            launchVelocityGame.z,
+            std::abs(_savedGravity));
+        bool nativeJumpRequested = false;
+        RockProviderResultV1 nativeJumpResult = RockProviderResultV1::NotReady;
+        if (controllerStateValid && nativeJumpHeight > 0.0f) {
+            RockProviderPlayerControllerJumpRequestV1 request{};
+            request.heightGameUnits = nativeJumpHeight;
+            request.worldGeneration = _worldGeneration;
+            request.skeletonGeneration = _skeletonGeneration;
+            request.providerGeneration = _providerGeneration;
+            nativeJumpResult =
+                rockApiClient().requestPlayerControllerJump(request);
+            nativeJumpRequested = nativeJumpResult == RockProviderResultV1::Ok;
+            if (!nativeJumpRequested) {
+                logger::warn(
+                    "ROCK rejected release-driven native jump admission: result={} height={:.1f}; applying the verified launch velocity without state assistance.",
+                    static_cast<std::uint32_t>(nativeJumpResult),
+                    nativeJumpHeight);
+            }
+        }
+
         restoreGravity(currentAccess);
 
         bool launchApplied = false;
         if (currentAccess) {
-            if (policy::lengthSquared(launchGame) > 1.0e-6f) {
+            if (policy::lengthSquared(launchVelocityGame) > 1.0e-6f) {
                 const policy::Vec3 launchHavok = policy::scale(
-                    launchGame,
+                    launchVelocityGame,
                     gameToHavokScale);
                 launchApplied = trySetVelocity(
                     *currentAccess,
@@ -1748,16 +1750,32 @@ namespace rock_wall_climbing
             }
         }
 
+        if (launchApplied) {
+            finishLaunchObservation("superseded");
+            _launchObservation.active = true;
+            _launchObservation.nativeJumpRequested = nativeJumpRequested;
+            _launchObservation.startFrameIndex = _lastFrameIndex;
+            _launchObservation.lastResult =
+                static_cast<std::uint32_t>(controllerStateResult);
+            _launchObservation.requestedVelocity = launchVelocityGame;
+        }
+
         if (_climbing) {
             logMotionTrace(reason);
             logger::info(
-                "Climb ended reason={} launch={} velocityGame=({:.1f},{:.1f},{:.1f}) speed={:.1f} samples={}.",
+                "Climb ended reason={} launch={} impulseGame=({:.1f},{:.1f},{:.1f}) velocityGame=({:.1f},{:.1f},{:.1f}) speed={:.1f} nativeJump={} height={:.1f} requestResult={} samples={}.",
                 reason ? reason : "unknown",
                 launchApplied ? "applied" : "none",
-                launchGame.x,
-                launchGame.y,
-                launchGame.z,
-                policy::length(launchGame),
+                launchImpulseGame.x,
+                launchImpulseGame.y,
+                launchImpulseGame.z,
+                launchVelocityGame.x,
+                launchVelocityGame.y,
+                launchVelocityGame.z,
+                policy::length(launchVelocityGame),
+                nativeJumpRequested ? "accepted" : "not-accepted",
+                nativeJumpHeight,
+                static_cast<std::uint32_t>(nativeJumpResult),
                 chronological.size());
         }
         resetLocalState();
@@ -1777,7 +1795,7 @@ namespace rock_wall_climbing
             "blendedPull=({:.2f},{:.2f},{:.2f}) requested=({:.2f},{:.2f},{:.2f}) "
             "submitted=({:.2f},{:.2f},{:.2f}) observed=({:.2f},{:.2f},{:.2f}) external=({:.2f},{:.2f},{:.2f}) "
             "upward(right/left/blended/requested/submitted)=({:.2f},{:.2f},{:.2f},{:.2f},{:.2f}) "
-            "maxLead={:.2f} headClamped={} rayFailures={} discontinuities={}.",
+            "maxLead={:.2f} headClamped={} headSlides={} rayFailures={} discontinuities={}.",
             reason ? reason : "unknown", _lastFrameIndex, trace.handMask,
             trace.frames, trace.observedFrames, trace.seconds,
             trace.pull[0].x, trace.pull[0].y, trace.pull[0].z,
@@ -1793,7 +1811,8 @@ namespace rock_wall_climbing
             trace.upwardPull[0], trace.upwardPull[1], trace.upwardBlendedPull,
             trace.upwardRequested, trace.upwardSubmitted,
             trace.maximumTargetLead, trace.headClampedFrames,
-            trace.raycastFailures, trace.discontinuities);
+            trace.headSlidePasses, trace.raycastFailures,
+            trace.discontinuities);
         _motionTrace = {};
     }
 

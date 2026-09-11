@@ -112,24 +112,11 @@ namespace rock_wall_climbing::policy
         float speed,
         float deltaSeconds) noexcept;
 
-    inline constexpr float LEDGE_MINIMUM_FLOOR_NORMAL_Z = 0.65f;
-    inline constexpr float LEDGE_MAXIMUM_WALL_NORMAL_Z = 0.65f;
-    inline constexpr float LEDGE_MINIMUM_RISE_GAME = 6.0f;
-    inline constexpr float LEDGE_MAXIMUM_RISE_GAME = 128.0f;
-    inline constexpr float LEDGE_MAXIMUM_FLOOR_BELOW_CONTACT_GAME = 48.0f;
-    inline constexpr float LEDGE_MAXIMUM_FLOOR_ABOVE_CONTACT_GAME = 32.0f;
-
-    [[nodiscard]] bool resolveWallOutwardNormal(
-        Vec3 contactNormal,
-        Vec3 playerFromContact,
-        Vec3& outwardHorizontal) noexcept;
-
-    [[nodiscard]] bool validateLedgeFloor(
-        Vec3 floorNormal,
-        float floorHeight,
-        float playerHeight,
-        float contactHeight,
-        float& rise) noexcept;
+    [[nodiscard]] bool slideAlongCollisionPlane(
+        Vec3 remainingMotion,
+        Vec3 hitNormal,
+        Vec3 castDirection,
+        Vec3& slidingMotion) noexcept;
 
     struct VelocitySample
     {
@@ -140,7 +127,7 @@ namespace rock_wall_climbing::policy
     struct LaunchSettings
     {
         bool enabled{ true };
-        float historySeconds{ 0.18f };
+        float historySeconds{ 0.10f };
         float directionFilterDegrees{ 75.0f };
         float multiplier{ 1.15f };
         float horizontalBoost{ 1.05f };
@@ -151,6 +138,18 @@ namespace rock_wall_climbing::policy
     [[nodiscard]] Vec3 calculateLaunchVelocity(
         std::span<const VelocitySample> samples,
         const LaunchSettings& settings) noexcept;
+
+    inline constexpr float CHARACTER_GRAVITY_ACCELERATION_SCALE = 700.0f;
+    inline constexpr float MAXIMUM_NATIVE_JUMP_HEIGHT_GAME = 256.0f;
+
+    [[nodiscard]] Vec3 addLaunchImpulse(
+        Vec3 currentVelocity,
+        Vec3 launchImpulse,
+        float maximumSpeed) noexcept;
+
+    [[nodiscard]] float nativeJumpHeightForVelocity(
+        float upwardVelocity,
+        float gravityScalar) noexcept;
 
     // Exact vanilla world-surface domain used by ROCK's FixedAnchor dynamic
     // hand proxies. Dynamic car proxy layers are intentionally omitted.

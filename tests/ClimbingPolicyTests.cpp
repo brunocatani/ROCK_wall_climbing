@@ -186,40 +186,36 @@ namespace
         assert(close(blend.movementDelta.z, 2.0f));
     }
 
-    void ledgeGeometryRequiresWallFloorAndReachability()
+    void collisionSlidePreservesSurfaceTangent()
     {
-        Vec3 outward{};
-        assert(resolveWallOutwardNormal(
-            { -1.0f, 0.0f, 0.1f },
-            { 10.0f, 0.0f, 0.0f },
-            outward));
-        assert(outward.x > 0.99f);
-        assert(close(outward.z, 0.0f));
-        assert(!resolveWallOutwardNormal(
-            { 0.0f, 0.0f, 1.0f },
-            { 10.0f, 0.0f, 0.0f },
-            outward));
-
-        float rise = 0.0f;
-        assert(validateLedgeFloor(
-            { 0.0f, 0.0f, 1.0f },
-            68.0f,
-            0.0f,
-            72.0f,
-            rise));
-        assert(close(rise, 68.0f));
-        assert(!validateLedgeFloor(
+        Vec3 sliding{};
+        assert(slideAlongCollisionPlane(
+            { -2.0f, 0.0f, 5.0f },
             { 1.0f, 0.0f, 0.0f },
-            68.0f,
-            0.0f,
-            72.0f,
-            rise));
-        assert(!validateLedgeFloor(
+            { -2.0f, 0.0f, 5.0f },
+            sliding));
+        assert(close(sliding.x, 0.0f));
+        assert(close(sliding.z, 5.0f));
+
+        assert(slideAlongCollisionPlane(
+            { -2.0f, 0.0f, 5.0f },
+            { -1.0f, 0.0f, 0.0f },
+            { -2.0f, 0.0f, 5.0f },
+            sliding));
+        assert(close(sliding.x, 0.0f));
+        assert(close(sliding.z, 5.0f));
+
+        assert(slideAlongCollisionPlane(
+            { 0.0f, 0.0f, 5.0f },
+            { 0.0f, 0.0f, -1.0f },
             { 0.0f, 0.0f, 1.0f },
-            160.0f,
-            0.0f,
-            72.0f,
-            rise));
+            sliding));
+        assert(close(length(sliding), 0.0f));
+        assert(!slideAlongCollisionPlane(
+            { 0.0f, 0.0f, 5.0f },
+            {},
+            { 0.0f, 0.0f, 1.0f },
+            sliding));
     }
 
     void adaptiveSmoothingIsBoundedAndMonotonic()
@@ -266,6 +262,30 @@ namespace
         LaunchSettings settings{};
         settings.minimumSpeed = 10.0f;
         assert(close(length(calculateLaunchVelocity(samples, settings)), 0.0f));
+    }
+
+    void launchImpulseIsAdditiveAndNativeHeightMatchesVelocity()
+    {
+        const Vec3 combined = addLaunchImpulse(
+            { 10.0f, -20.0f, -30.0f },
+            { 100.0f, 20.0f, 200.0f },
+            450.0f);
+        assert(close(combined.x, 110.0f));
+        assert(close(combined.y, 0.0f));
+        assert(close(combined.z, 170.0f));
+
+        const Vec3 capped = addLaunchImpulse(
+            {},
+            { 800.0f, 0.0f, 600.0f },
+            450.0f);
+        assert(close(length(capped), 450.0f));
+
+        assert(close(nativeJumpHeightForVelocity(350.0f, 1.0f), 87.5f));
+        assert(close(nativeJumpHeightForVelocity(-1.0f, 1.0f), 0.0f));
+        assert(close(nativeJumpHeightForVelocity(350.0f, 0.0f), 0.0f));
+        assert(close(
+            nativeJumpHeightForVelocity(1000.0f, 1.0f),
+            MAXIMUM_NATIVE_JUMP_HEIGHT_GAME));
     }
 
     void velocityHistoryIsBoundedAndChronological()
@@ -361,10 +381,11 @@ int main()
     joinedHandConfidenceRampsByElapsedTime();
     handMotionBlendPreservesSingleHandAndFadesInTheSecond();
     activityWeightKeepsMovingHandoffResponsive();
-    ledgeGeometryRequiresWallFloorAndReachability();
+    collisionSlidePreservesSurfaceTangent();
     adaptiveSmoothingIsBoundedAndMonotonic();
     launchRejectsOpposedNoiseAndCapsSpeed();
     slowReleaseDoesNotLaunch();
+    launchImpulseIsAdditiveAndNativeHeightMatchesVelocity();
     velocityHistoryIsBoundedAndChronological();
     zeroHandoffSamplesAgeOutOldLaunchMomentum();
     controllerVelocityDispatchRejectsTheTransformSlot();
