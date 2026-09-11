@@ -192,8 +192,7 @@ namespace rock_wall_climbing::policy
 
     float activityAdjustedHandWeight(
         const float baseWeight,
-        const Vec3 pullDelta,
-        const bool releasing) noexcept
+        const Vec3 pullDelta) noexcept
     {
         if (!std::isfinite(baseWeight) || baseWeight <= 0.0f ||
             !finite(pullDelta)) {
@@ -205,11 +204,9 @@ namespace rock_wall_climbing::policy
             1.0f);
         const float response =
             normalized * normalized * (3.0f - 2.0f * normalized);
-        const float minimum = releasing ?
-            0.0f :
-            HELD_HAND_MINIMUM_ACTIVITY_WEIGHT;
         return std::clamp(baseWeight, 0.0f, 1.0f) *
-               (minimum + (1.0f - minimum) * response);
+               (HELD_HAND_MINIMUM_ACTIVITY_WEIGHT +
+                   (1.0f - HELD_HAND_MINIMUM_ACTIVITY_WEIGHT) * response);
     }
 
     float adaptiveSmoothingSpeed(

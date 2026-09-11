@@ -97,8 +97,7 @@ namespace rock_wall_climbing::policy
 
     [[nodiscard]] float activityAdjustedHandWeight(
         float baseWeight,
-        Vec3 pullDelta,
-        bool releasing) noexcept;
+        Vec3 pullDelta) noexcept;
 
     inline constexpr float ADAPTIVE_SMOOTHING_QUIET_MULTIPLIER = 0.75f;
     inline constexpr float ADAPTIVE_SMOOTHING_ACTIVE_MULTIPLIER = 1.45f;

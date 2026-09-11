@@ -56,12 +56,6 @@ namespace rock_wall_climbing
                     RockProviderPlayerControllerJumpRequestV1& request)
                 const noexcept;
 
-        [[nodiscard]] bool queryRawWandButtonState(
-            rock::provider::RockProviderHand hand,
-            std::uint32_t buttonId,
-            rock::provider::RockProviderRawWandButtonStateV1& state)
-            const noexcept;
-
     private:
         const rock::provider::RockProviderApi* _api{ nullptr };
         std::uint64_t _ownerToken{ 0 };

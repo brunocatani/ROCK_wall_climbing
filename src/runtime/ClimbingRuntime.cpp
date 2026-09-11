@@ -30,7 +30,6 @@ namespace rock_wall_climbing
         constexpr std::uint32_t TARGET_LEASE_FRAMES = 4;
         constexpr std::uint32_t INVALID_BODY_ID = 0x7FFF'FFFFu;
         constexpr float MAXIMUM_FRAME_DELTA_SECONDS = 0.1f;
-        constexpr std::uint32_t PHYSICAL_GRAB_BUTTON_ID = 2;
         constexpr std::uint32_t MAXIMUM_HEAD_MOTION_PASSES = 3;
         constexpr std::uint32_t LAUNCH_OBSERVATION_FRAMES = 8;
 
@@ -239,7 +238,6 @@ namespace rock_wall_climbing
             }
             static_cast<void>(_config.reload());
             _sessionActive = true;
-            _targetsRequireGripRelease = false;
             _launchObservation = {};
             _lastBlockers = UINT32_MAX;
             static_cast<void>(connect());
@@ -263,7 +261,6 @@ namespace rock_wall_climbing
         _skeletonGeneration = 0;
         _providerGeneration = 0;
         _lastFrameIndex = 0;
-        _targetsRequireGripRelease = false;
         _launchObservation = {};
         _lastBlockers = UINT32_MAX;
     }
@@ -452,18 +449,6 @@ namespace rock_wall_climbing
                 _targetGeneration);
         }
 
-        if (_targetsRequireGripRelease) {
-            clearTargets();
-            if (!gripsReleasedForRearm()) {
-                return;
-            }
-            _targetsRequireGripRelease = false;
-            static_cast<void>(nextTargetGeneration());
-            logger::info(
-                "Both physical grabs released; climbing targets rearmed at generation={}.",
-                _targetGeneration);
-        }
-
         if (!publishTargets(snapshot)) {
             finishClimb(nullptr, 0.0f, false, "target-publication");
             clearTargets();
@@ -537,107 +522,30 @@ namespace rock_wall_climbing
         _previousSubmittedPosition = access.playerPosition;
         _motionPositionValid = true;
 
-        RockProviderPlayerControllerStateV1 controllerState{};
-        const auto controllerStateResult =
-            rockApiClient().queryPlayerControllerState(
-                static_cast<std::uint32_t>(
-                    RockProviderPlayerControllerQueryFlagV1::
-                        CheckPenetration),
-                controllerState);
-        const bool controllerStateValid =
-            controllerStateResult == RockProviderResultV1::Ok &&
-            hasControllerStateFlag(
-                controllerState.flags,
-                RockProviderPlayerControllerStateFlagV1::Valid) &&
-            hasControllerStateFlag(
-                controllerState.flags,
-                RockProviderPlayerControllerStateFlagV1::PositionValid) &&
-            hasControllerStateFlag(
-                controllerState.flags,
-                RockProviderPlayerControllerStateFlagV1::PenetrationChecked) &&
-            controllerState.worldGeneration == snapshot.worldGeneration &&
-            controllerState.skeletonGeneration ==
-                snapshot.skeletonGeneration &&
-            controllerState.providerGeneration ==
-                snapshot.providerGeneration;
-        observeLaunchReadback(
-            snapshot.frameIndex,
-            controllerStateResult,
-            controllerState,
-            controllerStateValid);
-        if (!controllerStateValid) {
-            const std::uint32_t failureKey =
-                static_cast<std::uint32_t>(controllerStateResult) |
-                (controllerState.flags << 8);
-            if (failureKey != _lastControllerStateResult) {
-                logger::warn(
-                    "ROCK player-controller state unavailable or stale (result={} flags=0x{:03X}); penetration and release-jump state assistance are disabled while the existing surface latch remains active.",
-                    static_cast<std::uint32_t>(controllerStateResult),
-                    controllerState.flags);
-                _lastControllerStateResult = failureKey;
-            }
-            // Controller telemetry augments the established climbing path. A
-            // Provider readback augments penetration recovery and native
-            // release-jump admission; it must never destroy a valid latch.
-            _lastSafePlayerPositionValid = false;
-            _penetrationRecoveryLogged = false;
-        } else {
-            _lastControllerStateResult = UINT32_MAX;
-
-            const bool penetrating = hasControllerStateFlag(
-                controllerState.flags,
-                RockProviderPlayerControllerStateFlagV1::Penetrating);
-            if (_climbing && penetrating) {
-                if (!_lastSafePlayerPositionValid ||
-                    !suspendGravity(access) ||
-                    !trySetVelocity(access, {}) ||
-                    !trySetPlayerPosition(
-                        access.player,
-                        _lastSafePlayerPosition)) {
-                    logger::error(
-                        "Player controller penetration could not be rolled back to a verified climbing position; climbing failed closed.");
-                    finishClimb(&access, 0.0f, false, "penetration-unrecoverable");
-                    clearTargets();
-                    _targetsRequireGripRelease = currentHeldCount != 0;
-                    return;
-                }
-
-                if (!_penetrationRecoveryLogged) {
-                    logger::warn(
-                        "Rolled back a penetrating climb step to last safe player position ({:.2f},{:.2f},{:.2f}); held hands will rebase before motion resumes.",
-                        _lastSafePlayerPosition.x,
-                        _lastSafePlayerPosition.y,
-                        _lastSafePlayerPosition.z);
-                    _penetrationRecoveryLogged = true;
-                }
-                _targetPlayerPosition = _lastSafePlayerPosition;
-                _previousSubmittedPosition = _lastSafePlayerPosition;
-                _targetPositionValid = true;
-                _velocityHistory.clear();
-                for (std::size_t index = 0; index < _hands.size(); ++index) {
-                    if (observed[index].held) {
-                        _hands[index].held = true;
-                        _hands[index].baselineValid = false;
-                        _hands[index].bodyId = observed[index].bodyId;
-                        _hands[index].blendWeight = 0.0f;
-                    } else {
-                        _hands[index] = {};
-                    }
-                }
-                if (currentHeldCount == 0) {
-                    finishClimb(
-                        &access,
-                        snapshot.gameToHavokScale,
-                        false,
-                        "final-release-after-rollback");
-                }
-                return;
-            }
-            if (_climbing) {
-                _penetrationRecoveryLogged = false;
-                _lastSafePlayerPosition = access.playerPosition;
-                _lastSafePlayerPositionValid = true;
-            }
+        if (_launchObservation.active) {
+            RockProviderPlayerControllerStateV1 controllerState{};
+            const auto controllerStateResult =
+                rockApiClient().queryPlayerControllerState(
+                    0,
+                    controllerState);
+            const bool controllerStateValid =
+                controllerStateResult == RockProviderResultV1::Ok &&
+                hasControllerStateFlag(
+                    controllerState.flags,
+                    RockProviderPlayerControllerStateFlagV1::Valid) &&
+                hasControllerStateFlag(
+                    controllerState.flags,
+                    RockProviderPlayerControllerStateFlagV1::PositionValid) &&
+                controllerState.worldGeneration == snapshot.worldGeneration &&
+                controllerState.skeletonGeneration ==
+                    snapshot.skeletonGeneration &&
+                controllerState.providerGeneration ==
+                    snapshot.providerGeneration;
+            observeLaunchReadback(
+                snapshot.frameIndex,
+                controllerStateResult,
+                controllerState,
+                controllerStateValid);
         }
 
         if (currentHeldCount == 0 && !_climbing && !_gravityOwned) {
@@ -711,8 +619,7 @@ namespace rock_wall_climbing
                     const float weight =
                         policy::activityAdjustedHandWeight(
                             hand.blendWeight,
-                            motion.pullDelta,
-                            false);
+                            motion.pullDelta);
                     contributions[index] = {
                         true,
                         weight,
@@ -725,32 +632,6 @@ namespace rock_wall_climbing
                 hand.previousAnchorValid = current.anchorValid;
                 hand.previousAnchor = current.anchor;
                 continue;
-            }
-
-            if (wasHeld && previous.baselineValid) {
-                policy::HandMotionInput releaseInput{};
-                releaseInput.previousHandOffset =
-                    previous.previousHandOffset;
-                releaseInput.currentHandOffset = currentHandOffsets[index];
-                releaseInput.movementScale = _config.movementScale;
-                releaseInput.maximumDelta =
-                    _config.maximumHandDeltaGameUnits;
-                releaseInput.followMovingSurface = false;
-                const auto releaseMotion =
-                    policy::evaluateHandMotion(releaseInput);
-                if (releaseMotion.discontinuity) {
-                    ++discontinuityCount;
-                } else if (releaseMotion.valid) {
-                    contributions[index] = {
-                        true,
-                        policy::activityAdjustedHandWeight(
-                            previous.blendWeight,
-                            releaseMotion.pullDelta,
-                            true),
-                        releaseMotion.totalDelta,
-                        releaseMotion.pullDelta,
-                    };
-                }
             }
 
             if (current.held) {
@@ -803,12 +684,6 @@ namespace rock_wall_climbing
         const policy::Vec3 blendedPull = motionBlend.valid ?
             motionBlend.pullDelta :
             policy::Vec3{};
-        _velocityHistory.push(
-            policy::VelocitySample{
-                blendedPull,
-                snapshot.deltaSeconds,
-            },
-            _config.launch.historySeconds);
 
         if (currentHeldCount == 0) {
             finishClimb(
@@ -818,6 +693,13 @@ namespace rock_wall_climbing
                 "final-release");
             return;
         }
+
+        _velocityHistory.push(
+            policy::VelocitySample{
+                blendedPull,
+                snapshot.deltaSeconds,
+            },
+            _config.launch.historySeconds);
 
         if (!suspendGravity(access)) {
             logger::error(
@@ -1326,25 +1208,6 @@ namespace rock_wall_climbing
         _launchObservation = {};
     }
 
-    bool ClimbingRuntime::gripsReleasedForRearm() const noexcept
-    {
-        constexpr std::array<RockProviderHand, 2> HANDS{
-            RockProviderHand::Right,
-            RockProviderHand::Left,
-        };
-        for (const auto hand : HANDS) {
-            RockProviderRawWandButtonStateV1 state{};
-            if (!rockApiClient().queryRawWandButtonState(
-                    hand,
-                    PHYSICAL_GRAB_BUTTON_ID,
-                    state) ||
-                state.available == 0 || state.held != 0) {
-                return false;
-            }
-        }
-        return true;
-    }
-
     bool ClimbingRuntime::tryResolveControllerAccess(
         ControllerAccess& access,
         ControllerResolveStage& deepestStage) noexcept
@@ -1672,9 +1535,7 @@ namespace rock_wall_climbing
         if (policy::lengthSquared(launchImpulseGame) > 1.0e-6f &&
             currentAccess) {
             controllerStateResult = rockApiClient().queryPlayerControllerState(
-                static_cast<std::uint32_t>(
-                    RockProviderPlayerControllerQueryFlagV1::
-                        CheckPenetration),
+                0,
                 controllerState);
             controllerStateValid =
                 controllerStateResult == RockProviderResultV1::Ok &&
@@ -1684,13 +1545,6 @@ namespace rock_wall_climbing
                 hasControllerStateFlag(
                     controllerState.flags,
                     RockProviderPlayerControllerStateFlagV1::VelocityValid) &&
-                hasControllerStateFlag(
-                    controllerState.flags,
-                    RockProviderPlayerControllerStateFlagV1::
-                        PenetrationChecked) &&
-                !hasControllerStateFlag(
-                    controllerState.flags,
-                    RockProviderPlayerControllerStateFlagV1::Penetrating) &&
                 controllerState.worldGeneration == _worldGeneration &&
                 controllerState.skeletonGeneration == _skeletonGeneration &&
                 controllerState.providerGeneration == _providerGeneration;
@@ -1821,11 +1675,8 @@ namespace rock_wall_climbing
         _climbing = false;
         _targetPositionValid = false;
         _targetPlayerPosition = {};
-        _lastSafePlayerPositionValid = false;
-        _lastSafePlayerPosition = {};
         _hands = {};
         _velocityHistory.clear();
-        _penetrationRecoveryLogged = false;
         _motionTrace = {};
         _motionPositionValid = false;
         _previousPlayerPosition = {};

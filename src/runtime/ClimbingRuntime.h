@@ -158,7 +158,6 @@ namespace rock_wall_climbing
             const rock::provider::RockProviderPlayerControllerStateV1& state,
             bool stateValid) noexcept;
         void finishLaunchObservation(const char* reason) noexcept;
-        [[nodiscard]] bool gripsReleasedForRearm() const noexcept;
 
         [[nodiscard]] static bool tryResolveControllerAccess(
             ControllerAccess& access,
@@ -199,13 +198,9 @@ namespace rock_wall_climbing
         bool _climbing{ false };
         bool _targetPositionValid{ false };
         policy::Vec3 _targetPlayerPosition{};
-        bool _lastSafePlayerPositionValid{ false };
-        policy::Vec3 _lastSafePlayerPosition{};
         std::array<HandState, 2> _hands{};
         VelocityHistory _velocityHistory{};
 
-        bool _targetsRequireGripRelease{ false };
-        bool _penetrationRecoveryLogged{ false };
         LaunchObservation _launchObservation{};
 
         bool _gravityOwned{ false };
@@ -223,7 +218,6 @@ namespace rock_wall_climbing
         std::uint32_t _lastBlockers{ UINT32_MAX };
         std::uint32_t _lastPublishResult{ UINT32_MAX };
         std::uint32_t _lastStateResult{ UINT32_MAX };
-        std::uint32_t _lastControllerStateResult{ UINT32_MAX };
         ControllerResolveStage _lastControllerFailure{
             ControllerResolveStage::Complete
         };

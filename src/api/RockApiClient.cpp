@@ -73,7 +73,6 @@ namespace rock_wall_climbing
             !_api->copyTouchGrabStatesForScopeV1 ||
             !_api->getHandInteractionStateV1 ||
             !_api->queryWorldRaycastV1 ||
-            !_api->getRawWandButtonStateV1 ||
             !_api->getPlayerControllerStateV1 ||
             !_api->requestPlayerControllerJumpV1) {
             logger::error(
@@ -269,16 +268,4 @@ namespace rock_wall_climbing
             &request);
     }
 
-    bool RockApiClient::queryRawWandButtonState(
-        const rock::provider::RockProviderHand hand,
-        const std::uint32_t buttonId,
-        rock::provider::RockProviderRawWandButtonStateV1& state)
-        const noexcept
-    {
-        state = {};
-        return ready() && _api->getRawWandButtonStateV1(
-                              hand,
-                              buttonId,
-                              &state);
-    }
 }

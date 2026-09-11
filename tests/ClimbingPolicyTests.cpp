@@ -156,26 +156,19 @@ namespace
     {
         const float heldStationary = activityAdjustedHandWeight(
             1.0f,
-            {},
-            false);
-        const float releasedStationary = activityAdjustedHandWeight(
-            1.0f,
-            {},
-            true);
+            {});
         const float joinedMoving = activityAdjustedHandWeight(
             0.25f,
-            { 3.0f, 0.0f, 0.0f },
-            false);
+            { 3.0f, 0.0f, 0.0f });
 
         assert(close(
             heldStationary,
             HELD_HAND_MINIMUM_ACTIVITY_WEIGHT));
-        assert(close(releasedStationary, 0.0f));
         assert(close(joinedMoving, 0.25f));
 
         const std::array<HandMotionContribution, 2> handoff{
             HandMotionContribution{
-                true, releasedStationary, {}, {} },
+                false, heldStationary, {}, {} },
             HandMotionContribution{
                 true, joinedMoving, { 6.0f, 0.0f, 2.0f },
                 { 6.0f, 0.0f, 2.0f } },
