@@ -34,7 +34,8 @@ namespace rock_wall_climbing
             CoTaskMemFree(documents);
             path /= L"My Games";
             path /= L"Fallout4VR";
-            path /= L"ROCK_Wall_Climbing_Config";
+            path /= L"Mods_Config";
+            path /= L"ROCK_Wall_Climbing";
             path /= L"ROCK_Wall_Climbing.ini";
             return path;
         }
