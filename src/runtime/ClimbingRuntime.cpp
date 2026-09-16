@@ -14,6 +14,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 
 namespace rock_wall_climbing
 {
@@ -46,6 +47,9 @@ namespace rock_wall_climbing
         constexpr std::array<std::uint8_t, 16> GET_WORLD_PREFIX{
             0x40, 0x53, 0x48, 0x83, 0xEC, 0x20, 0x48, 0x8B,
             0x01, 0x48, 0x8D, 0x54, 0x24, 0x30, 0x48, 0x8B,
+        };
+        constexpr std::array<std::uint8_t, 6> ENTRY_JUMP_PREFIX{
+            0xFF, 0x25, 0, 0, 0, 0,
         };
 
         static_assert(
@@ -1527,10 +1531,50 @@ namespace rock_wall_climbing
             result.stage = CapsuleQueryStage::WorldGuard;
             const auto* getWorldBytes =
                 reinterpret_cast<const std::uint8_t*>(getWorldAddress);
+            bool worldAccessorValid = true;
             for (std::size_t index = 0; index < GET_WORLD_PREFIX.size(); ++index) {
                 if (getWorldBytes[index] != GET_WORLD_PREFIX[index]) {
-                    return result;
+                    worldAccessorValid = false;
+                    break;
                 }
+            }
+            if (!worldAccessorValid &&
+                access.velocityImplementation ==
+                    controller_policy::VelocityImplementation::Proxy) {
+                // ROCK's verified teardown-safety entry hook replaces the
+                // original proxy accessor bytes with FF 25 + an absolute
+                // target. Accept only that exact patch aimed at executable
+                // memory belonging to the loaded ROCK.dll.
+                bool patchMatches = true;
+                for (std::size_t index = 0; index < ENTRY_JUMP_PREFIX.size();
+                     ++index) {
+                    if (getWorldBytes[index] != ENTRY_JUMP_PREFIX[index]) {
+                        patchMatches = false;
+                        break;
+                    }
+                }
+                std::uintptr_t hookTarget = 0;
+                if (patchMatches) {
+                    std::memcpy(&hookTarget, getWorldBytes + 6,
+                        sizeof(hookTarget));
+                }
+                const HMODULE rockModule = GetModuleHandleW(L"ROCK.dll");
+                MEMORY_BASIC_INFORMATION memory{};
+                const bool targetOwnedByRock = patchMatches &&
+                    rockModule && hookTarget != 0 &&
+                    VirtualQuery(reinterpret_cast<const void*>(hookTarget),
+                        &memory, sizeof(memory)) == sizeof(memory) &&
+                    memory.AllocationBase == rockModule &&
+                    memory.State == MEM_COMMIT;
+                const DWORD protection = memory.Protect & 0xFFu;
+                const bool executable = protection == PAGE_EXECUTE ||
+                    protection == PAGE_EXECUTE_READ ||
+                    protection == PAGE_EXECUTE_READWRITE ||
+                    protection == PAGE_EXECUTE_WRITECOPY;
+                worldAccessorValid = targetOwnedByRock && executable;
+            }
+            if (!worldAccessorValid) {
+                return result;
             }
             using GetWorldFunction = void* (*)(RE::bhkCharacterController*);
             const auto getWorld = reinterpret_cast<GetWorldFunction>(
