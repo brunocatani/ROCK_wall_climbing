@@ -82,6 +82,30 @@ namespace rock_wall_climbing
             policy::Vec3 normal{};
         };
 
+        enum class CapsuleClearance : std::uint8_t
+        {
+            Clear,
+            Blocked,
+            Unavailable,
+        };
+
+        enum class CapsuleQueryStage : std::uint8_t
+        {
+            Preflight,
+            QueryGuard,
+            Shape,
+            Implementation,
+            WorldGuard,
+            World,
+            Complete,
+        };
+
+        struct CapsuleQueryResult
+        {
+            CapsuleClearance clearance{ CapsuleClearance::Unavailable };
+            CapsuleQueryStage stage{ CapsuleQueryStage::Preflight };
+        };
+
         // Fixed-size totals for one held-hand set. Normal logging emits only
         // at handoffs and teardown; detailed telemetry also emits every 0.5 s.
         struct MotionTrace
@@ -107,6 +131,13 @@ namespace rock_wall_climbing
             std::uint32_t headSlidePasses{ 0 };
             std::uint32_t raycastFailures{ 0 };
             std::uint32_t discontinuities{ 0 };
+            std::uint32_t capsuleClear{ 0 };
+            std::uint32_t capsuleDestinationBlocked{ 0 };
+            std::uint32_t capsulePathBlocked{ 0 };
+            std::uint32_t capsuleQueryUnavailable{ 0 };
+            CapsuleQueryStage deepestCapsuleQueryStage{
+                CapsuleQueryStage::Preflight
+            };
         };
 
         struct LaunchObservation
@@ -174,6 +205,10 @@ namespace rock_wall_climbing
         [[nodiscard]] static bool trySetPlayerPosition(
             RE::PlayerCharacter* player,
             policy::Vec3 positionGame) noexcept;
+        [[nodiscard]] static CapsuleQueryResult queryNativeCapsuleClearance(
+            const ControllerAccess& access,
+            policy::Vec3 destinationGame,
+            bool sweepPath) noexcept;
 
         [[nodiscard]] bool suspendGravity(
             const ControllerAccess& access) noexcept;

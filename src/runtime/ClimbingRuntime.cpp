@@ -32,10 +32,26 @@ namespace rock_wall_climbing
         constexpr float MAXIMUM_FRAME_DELTA_SECONDS = 0.1f;
         constexpr std::uint32_t MAXIMUM_HEAD_MOTION_PASSES = 3;
         constexpr std::uint32_t LAUNCH_OBSERVATION_FRAMES = 8;
+        constexpr std::uint32_t CAPSULE_DIAGNOSTIC_FRAME_INTERVAL = 16;
+        constexpr std::uintptr_t CAPSULE_CLEARANCE_QUERY_RVA = 0x1E21030;
+        constexpr std::uintptr_t PROXY_GET_WORLD_RVA = 0x1E4DEC0;
+        constexpr std::uintptr_t RIGID_GET_WORLD_RVA = 0x1E538A0;
+        constexpr std::array<std::uint8_t, 16> CAPSULE_CLEARANCE_QUERY_PREFIX{
+            0x48, 0x8B, 0xC4, 0x44, 0x88, 0x48, 0x20, 0x48,
+            0x89, 0x50, 0x10, 0x55, 0x53, 0x56, 0x57, 0x41,
+        };
+        constexpr std::array<std::uint8_t, 5> CAPSULE_COLLISION_FLAGS{
+            1, 1, 1, 1, 0,
+        };
+        constexpr std::array<std::uint8_t, 16> GET_WORLD_PREFIX{
+            0x40, 0x53, 0x48, 0x83, 0xEC, 0x20, 0x48, 0x8B,
+            0x01, 0x48, 0x8D, 0x54, 0x24, 0x30, 0x48, 0x8B,
+        };
 
         static_assert(
             offsetof(RE::bhkCharacterController, gravity) == 0x330,
             "CommonLibF4VR bhkCharacterController gravity layout changed");
+        static_assert(offsetof(RE::bhkCharacterController, shapes) == 0x360);
         static_assert(controller_policy::VELOCITY_SLOT_OFFSET == 0x1E0);
 
         constexpr std::size_t REQUIRED_SNAPSHOT_BYTES =
@@ -773,6 +789,21 @@ namespace rock_wall_climbing
         const policy::Vec3 appliedStep = policy::subtract(
             clampedPosition,
             access.playerPosition);
+        CapsuleQueryResult destinationQuery{};
+        CapsuleQueryResult pathQuery{};
+        const bool sampledCapsule = _config.detailedTelemetry &&
+            snapshot.frameIndex % CAPSULE_DIAGNOSTIC_FRAME_INTERVAL == 0 &&
+            policy::lengthSquared(appliedStep) > 1.0e-6f;
+        if (sampledCapsule) {
+            // Shadow-query the actual controller shape; this is diagnostic
+            // evidence only and does not change the established climb step.
+            destinationQuery = queryNativeCapsuleClearance(
+                access, clampedPosition, false);
+            if (destinationQuery.clearance == CapsuleClearance::Clear) {
+                pathQuery = queryNativeCapsuleClearance(
+                    access, clampedPosition, true);
+            }
+        }
         if (!trySetVelocity(access, {})) {
             logger::error(
                 "Player velocity cancellation failed during climbing; failing closed.");
@@ -817,6 +848,27 @@ namespace rock_wall_climbing
         trace.headSlidePasses += headSlidePasses;
         trace.raycastFailures += headQuerySucceeded ? 0u : 1u;
         trace.discontinuities += discontinuityCount;
+        if (sampledCapsule) {
+            if (destinationQuery.clearance == CapsuleClearance::Blocked) {
+                ++trace.capsuleDestinationBlocked;
+            } else if (destinationQuery.clearance == CapsuleClearance::Clear &&
+                       pathQuery.clearance == CapsuleClearance::Blocked) {
+                ++trace.capsulePathBlocked;
+            } else if (pathQuery.clearance == CapsuleClearance::Clear) {
+                ++trace.capsuleClear;
+            } else {
+                ++trace.capsuleQueryUnavailable;
+                const CapsuleQueryStage failedStage =
+                    destinationQuery.clearance == CapsuleClearance::Unavailable ?
+                    destinationQuery.stage :
+                    pathQuery.stage;
+                if (static_cast<std::uint8_t>(failedStage) >
+                    static_cast<std::uint8_t>(
+                        trace.deepestCapsuleQueryStage)) {
+                    trace.deepestCapsuleQueryStage = failedStage;
+                }
+            }
+        }
     }
 
     bool ClimbingRuntime::publishTargets(
@@ -1410,6 +1462,110 @@ namespace rock_wall_climbing
         return written;
     }
 
+    ClimbingRuntime::CapsuleQueryResult
+        ClimbingRuntime::queryNativeCapsuleClearance(
+            const ControllerAccess& access,
+            const policy::Vec3 destinationGame,
+            const bool sweepPath) noexcept
+    {
+        CapsuleQueryResult result{};
+        if (!access.controller || !validCoordinate(destinationGame) ||
+            !REL::Module::IsVR() ||
+            REL::Module::get().version() != F4SE::RUNTIME_VR_1_2_72) {
+            return result;
+        }
+
+        const std::uintptr_t moduleBase = REL::Module::get().base();
+        const std::uintptr_t queryAddress =
+            moduleBase + CAPSULE_CLEARANCE_QUERY_RVA;
+        const RE::NiPoint3 destination{
+            destinationGame.x,
+            destinationGame.y,
+            destinationGame.z,
+        };
+        __try {
+            result.stage = CapsuleQueryStage::QueryGuard;
+            const auto* bytes = reinterpret_cast<const std::uint8_t*>(
+                queryAddress);
+            for (std::size_t index = 0;
+                 index < CAPSULE_CLEARANCE_QUERY_PREFIX.size(); ++index) {
+                if (bytes[index] != CAPSULE_CLEARANCE_QUERY_PREFIX[index]) {
+                    return result;
+                }
+            }
+
+            result.stage = CapsuleQueryStage::Shape;
+            const auto* controllerBytes =
+                reinterpret_cast<const std::uint8_t*>(access.controller);
+            const auto shapeIndex =
+                *reinterpret_cast<const std::int32_t*>(
+                    controllerBytes + 0x354);
+            if (shapeIndex < 0 || shapeIndex > 1 ||
+                !*reinterpret_cast<void* const*>(
+                    controllerBytes + 0x360 + shapeIndex * sizeof(void*)) ||
+                !*reinterpret_cast<void* const*>(
+                    controllerBytes + 0x470)) {
+                return result;
+            }
+            result.stage = CapsuleQueryStage::Implementation;
+            const auto* vtable = *reinterpret_cast<const std::uintptr_t* const*>(
+                access.controller);
+            const std::uintptr_t expectedGetWorldRva =
+                access.velocityImplementation ==
+                        controller_policy::VelocityImplementation::Proxy ?
+                    PROXY_GET_WORLD_RVA :
+                access.velocityImplementation ==
+                        controller_policy::VelocityImplementation::RigidBody ?
+                    RIGID_GET_WORLD_RVA :
+                    0;
+            const std::uintptr_t getWorldAddress =
+                vtable[0x210 / sizeof(void*)];
+            if (expectedGetWorldRva == 0 ||
+                getWorldAddress != moduleBase + expectedGetWorldRva) {
+                return result;
+            }
+            result.stage = CapsuleQueryStage::WorldGuard;
+            const auto* getWorldBytes =
+                reinterpret_cast<const std::uint8_t*>(getWorldAddress);
+            for (std::size_t index = 0; index < GET_WORLD_PREFIX.size(); ++index) {
+                if (getWorldBytes[index] != GET_WORLD_PREFIX[index]) {
+                    return result;
+                }
+            }
+            using GetWorldFunction = void* (*)(RE::bhkCharacterController*);
+            const auto getWorld = reinterpret_cast<GetWorldFunction>(
+                getWorldAddress);
+            void* world = getWorld(access.controller);
+            result.stage = CapsuleQueryStage::World;
+            if (!world ||
+                !*reinterpret_cast<void* const*>(
+                    reinterpret_cast<const std::uint8_t*>(world) + 0x60)) {
+                return result;
+            }
+
+            // FO4VR's own candidate-position query at 0x141E21030 acquires
+            // the current controller shape and checks destination overlap;
+            // the optional final argument also checks the swept path. These
+            // flags match a native four-layer-category caller at 0x140DF3283.
+            using QueryFunction = bool (*)(
+                RE::bhkCharacterController*,
+                const RE::NiPoint3*,
+                const std::uint8_t*,
+                std::uint8_t);
+            const auto query = reinterpret_cast<QueryFunction>(queryAddress);
+            result.clearance = query(
+                access.controller,
+                &destination,
+                CAPSULE_COLLISION_FLAGS.data(),
+                sweepPath ? 1u : 0u) ?
+                CapsuleClearance::Clear : CapsuleClearance::Blocked;
+            result.stage = CapsuleQueryStage::Complete;
+            return result;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            return result;
+        }
+    }
+
     bool ClimbingRuntime::suspendGravity(
         const ControllerAccess& access) noexcept
     {
@@ -1649,7 +1805,8 @@ namespace rock_wall_climbing
             "blendedPull=({:.2f},{:.2f},{:.2f}) requested=({:.2f},{:.2f},{:.2f}) "
             "submitted=({:.2f},{:.2f},{:.2f}) observed=({:.2f},{:.2f},{:.2f}) external=({:.2f},{:.2f},{:.2f}) "
             "upward(right/left/blended/requested/submitted)=({:.2f},{:.2f},{:.2f},{:.2f},{:.2f}) "
-            "maxLead={:.2f} headClamped={} headSlides={} rayFailures={} discontinuities={}.",
+            "maxLead={:.2f} headClamped={} headSlides={} rayFailures={} discontinuities={} "
+            "capsule(clear/destination/path/unavailable)=({}/{}/{}/{}) capsuleStage={}.",
             reason ? reason : "unknown", _lastFrameIndex, trace.handMask,
             trace.frames, trace.observedFrames, trace.seconds,
             trace.pull[0].x, trace.pull[0].y, trace.pull[0].z,
@@ -1666,7 +1823,10 @@ namespace rock_wall_climbing
             trace.upwardRequested, trace.upwardSubmitted,
             trace.maximumTargetLead, trace.headClampedFrames,
             trace.headSlidePasses, trace.raycastFailures,
-            trace.discontinuities);
+            trace.discontinuities, trace.capsuleClear,
+            trace.capsuleDestinationBlocked,
+            trace.capsulePathBlocked, trace.capsuleQueryUnavailable,
+            static_cast<std::uint32_t>(trace.deepestCapsuleQueryStage));
         _motionTrace = {};
     }
 
