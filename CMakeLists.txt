@@ -48,21 +48,11 @@ if(NOT EXISTS
     "CommonLibF4VR path not found in '${COMMON_LIB_F4VR_PATH_SELECTED}'")
 endif()
 
-if(DEFINED ROCK_SOURCE_INCLUDE_DIR AND
-    NOT ROCK_SOURCE_INCLUDE_DIR STREQUAL "")
-  set(ROCK_SOURCE_INCLUDE_DIR_SELECTED
-    "${ROCK_SOURCE_INCLUDE_DIR}"
-    CACHE PATH "" FORCE)
-else()
-  set(ROCK_SOURCE_INCLUDE_DIR_SELECTED
-    "${WORKSPACE_ROOT}/main_projects/ROCK/src"
-    CACHE PATH "" FORCE)
+set(ROCK_SDK_INCLUDE "${WORKSPACE_ROOT}/my_frameworks_and_sdks/RPS_SDK/SDK/ROCK/include")
+if(NOT EXISTS "${ROCK_SDK_INCLUDE}/ROCK/Client.h")
+  message(FATAL_ERROR "The modular ROCK SDK is required")
 endif()
-if(NOT EXISTS
-    "${ROCK_SOURCE_INCLUDE_DIR_SELECTED}/api/ROCKProviderApi.h")
-  message(FATAL_ERROR
-    "ROCK V1 provider header not found in '${ROCK_SOURCE_INCLUDE_DIR_SELECTED}'")
-endif()
+include_directories("${ROCK_SDK_INCLUDE}")
 
 project(${NAME} VERSION ${VERSION} LANGUAGES CXX)
 
@@ -132,7 +122,7 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
 )
 target_include_directories(${PROJECT_NAME} PRIVATE
   "${BUILD_DIR}/include"
-  "${ROCK_SOURCE_INCLUDE_DIR_SELECTED}"
+  "${ROCK_SDK_INCLUDE}"
   "${SOURCE_DIR}"
 )
 

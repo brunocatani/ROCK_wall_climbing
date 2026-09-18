@@ -1,6 +1,6 @@
 #pragma once
 
-#include "api/ROCKProviderApi.h"
+#include "api/RockTypes.h"
 #include "runtime/ClimbingPolicy.h"
 #include "runtime/ControllerPolicy.h"
 #include "runtime/VelocityHistory.h"
@@ -157,19 +157,19 @@ namespace rock_wall_climbing
 
         ClimbingRuntime() = default;
 
-        static void ROCK_PROVIDER_CALL onRockFrame(
-            const rock::provider::RockProviderFrameSnapshot* snapshot,
+        static void ROCK_CALL onRockFrame(
+            const rock_wall_climbing::Frame* snapshot,
             void* userData) noexcept;
 
         void update(
-            const rock::provider::RockProviderFrameSnapshot& snapshot);
+            const rock_wall_climbing::Frame& snapshot);
         [[nodiscard]] std::uint32_t snapshotBlockers(
-            const rock::provider::RockProviderFrameSnapshot& snapshot)
+            const rock_wall_climbing::Frame& snapshot)
             const noexcept;
         void observeBlockers(std::uint32_t blockers) noexcept;
 
         [[nodiscard]] bool publishTargets(
-            const rock::provider::RockProviderFrameSnapshot& snapshot)
+            const rock_wall_climbing::Frame& snapshot)
             noexcept;
         void clearTargets() noexcept;
         [[nodiscard]] bool observeHands(
@@ -177,7 +177,7 @@ namespace rock_wall_climbing
             bool& invalidated) noexcept;
 
         [[nodiscard]] bool tryResolveHeadMotion(
-            const rock::provider::RockProviderFrameSnapshot& snapshot,
+            const rock_wall_climbing::Frame& snapshot,
             policy::Vec3 currentPlayerPosition,
             policy::Vec3 desiredPlayerPosition,
             policy::Vec3& resolvedPlayerPosition,
@@ -185,8 +185,8 @@ namespace rock_wall_climbing
             std::uint32_t& slidePasses) noexcept;
         void observeLaunchReadback(
             std::uint64_t frameIndex,
-            rock::provider::RockProviderResultV1 result,
-            const rock::provider::RockProviderPlayerControllerStateV1& state,
+            rock::api::Status result,
+            const rock::api::playercontroller::PlayerControllerStateV1& state,
             bool stateValid) noexcept;
         void finishLaunchObservation(const char* reason) noexcept;
 
