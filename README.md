@@ -14,7 +14,7 @@ Climbing yields to other supported grab interactions. Power armor frames and act
 ## Requirements and installation
 
 - Fallout 4 VR and F4SEVR.
-- ROCK and its requirements, including FRIK v78.2 or higher.
+- ROCK and its requirements, including FRIK 0.79 / API 2.3 for current source.
 
 Install through your mod manager and launch the game through F4SEVR. The plugin belongs at `Data/F4SE/Plugins/ROCK_Wall_Climbing.dll`.
 
@@ -35,9 +35,9 @@ The mod uses compiled defaults when this file is absent. To customize movement r
 <details>
 <summary>Building from source</summary>
 
-Requires Windows x64, Visual Studio 2022 with the v143 C++ toolset, CMake 4.2 or newer, vcpkg, CommonLibF4VR, and ROCK's source headers. The project uses C++23.
+Requires Windows x64, Visual Studio 2022 with the v143 C++ toolset, CMake 4.2 or newer, vcpkg, CommonLibF4VR, and the modular RPS SDK headers. The project uses C++23.
 
-Copy [CMakeUserPresets.json.template](CMakeUserPresets.json.template) to `CMakeUserPresets.json`. Configure your CommonLibF4VR path, `ROCK_SOURCE_INCLUDE_DIR`, and deployment destination; adjust the vcpkg path in your local presets if needed. The `custom-fast` preset copies the plugin to the mod folder you configure.
+Copy [CMakeUserPresets.json.template](CMakeUserPresets.json.template) to `CMakeUserPresets.json`. Configure your CommonLibF4VR path and deployment destination; current CMake reads the modular SDK at `my_frameworks_and_sdks/RPS_SDK/SDK/ROCK/include` beneath the workspace root. The old template key `ROCK_SOURCE_INCLUDE_DIR` is no longer used. Adjust the vcpkg path in your local presets if needed. The `custom-fast` preset copies the plugin to the mod folder you configure.
 
 ```powershell
 cmake --preset custom-fast -B build-fast
@@ -50,8 +50,16 @@ ctest --test-dir build-tests -C Release --output-on-failure -j 4
 
 </details>
 
+## Credits
+
+Thanks to **Bellbound**, creator of [VR Climbing](https://www.nexusmods.com/skyrimspecialedition/mods/168553) for Skyrim VR, for the inspiration behind ROCK Wall Climbing. [Original source code](https://github.com/bellbound/VR-Climbing).
+
 ## Source and license
 
 [Source code](https://github.com/brunocatani/ROCK_wall_climbing) · [GNU GPL v3 only (GPL-3.0-only)](LICENSE).
 
 Built with the assistance of AI.
+
+## Provider boundary
+
+Climbing negotiates Core callbacks, Hands and Grab Read, Touch Read/Write, Collision Read and PlayerController Read/Write. Scoped surface targets and native jump requests have separate ownership/lifecycle rules. Capsule-clearance work belongs to the addon; it is not a public PlayerController penetration API.
