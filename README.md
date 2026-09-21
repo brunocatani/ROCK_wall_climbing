@@ -14,9 +14,11 @@ Climbing yields to other supported grab interactions. Power armor frames and act
 ## Requirements and installation
 
 - Fallout 4 VR and F4SEVR.
-- ROCK and its requirements, including FRIK 0.79 / API 2.3 for current source.
+- ROCK 0.9 with its modular APIs and requirements, including FRIK 0.79 / API 2.3.
 
 Install through your mod manager and launch the game through F4SEVR. The plugin belongs at `Data/F4SE/Plugins/ROCK_Wall_Climbing.dll`.
+
+The installable `.7z` is available under [GitHub Releases](https://github.com/brunocatani/ROCK_wall_climbing/releases/latest). GitHub's automatic source archives are for development.
 
 ## How to climb
 
