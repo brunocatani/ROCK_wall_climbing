@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 4.2)
 
 set(NAME "ROCK_Wall_Climbing")
 set(FRIENDLY_NAME "ROCK (and Walls) Climbing")
-set(VERSION 0.1.0)
+set(VERSION 1.1.0)
 
 set(ROOT_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
 set(SOURCE_DIR "${ROOT_DIR}/src")
