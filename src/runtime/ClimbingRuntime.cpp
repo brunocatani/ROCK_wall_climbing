@@ -58,7 +58,7 @@ namespace rock_wall_climbing
         static_assert(offsetof(RE::bhkCharacterController, shapes) == 0x360);
         static_assert(controller_policy::VELOCITY_SLOT_OFFSET == 0x1E0);
 
-        constexpr std::size_t REQUIRED_SNAPSHOT_BYTES = sizeof(rock::api::core::SnapshotV1);
+        constexpr std::size_t REQUIRED_SNAPSHOT_BYTES = sizeof(rock::api::core::Snapshot);
 
         enum SnapshotBlocker : std::uint32_t
         {
@@ -76,35 +76,35 @@ namespace rock_wall_climbing
         };
 
         [[nodiscard]] constexpr std::uint32_t flag(
-            const rock::api::touch::TouchGrabTargetFlagV1 value) noexcept
+            const rock::api::touch::TouchGrabTargetFlag value) noexcept
         {
             return static_cast<std::uint32_t>(value);
         }
 
         [[nodiscard]] constexpr bool hasHandInteractionFlag(
             const std::uint32_t flags,
-            const rock::api::grab::HandInteractionFlagV1 value) noexcept
+            const rock::api::grab::HandInteractionFlag value) noexcept
         {
             return (flags & static_cast<std::uint32_t>(value)) != 0;
         }
 
         [[nodiscard]] constexpr bool hasTouchGrabStateFlag(
             const std::uint32_t flags,
-            const rock::api::touch::TouchGrabStateFlagV1 value) noexcept
+            const rock::api::touch::TouchGrabStateFlag value) noexcept
         {
             return (flags & static_cast<std::uint32_t>(value)) != 0;
         }
 
         [[nodiscard]] constexpr bool hasControllerStateFlag(
             const std::uint32_t flags,
-            const rock::api::playercontroller::PlayerControllerStateFlagV1 value) noexcept
+            const rock::api::playercontroller::PlayerControllerStateFlag value) noexcept
         {
             return (flags & static_cast<std::uint32_t>(value)) != 0;
         }
 
         [[nodiscard]] constexpr bool hasWorldRaycastResultFlag(
             const std::uint32_t flags,
-            const rock::api::collision::WorldRaycastResultFlagV1 value) noexcept
+            const rock::api::collision::WorldRaycastResultFlag value) noexcept
         {
             return (flags & static_cast<std::uint32_t>(value)) != 0;
         }
@@ -242,7 +242,7 @@ namespace rock_wall_climbing
         }
         _connected = true;
         logger::info(
-            "Connected to ROCK V1 fixed-surface latch and world-raycast services.");
+            "Connected to ROCK fixed-surface latch and world-raycast services.");
         return true;
     }
 
@@ -332,7 +332,7 @@ namespace rock_wall_climbing
             blockers |= AddonDisabled;
         }
         if (snapshot.size < REQUIRED_SNAPSHOT_BYTES ||
-            snapshot.version < rock::api::core::kMajor) {
+            snapshot.version != rock::api::core::Snapshot{}.version) {
             blockers |= InvalidSnapshot;
             return blockers;
         }
@@ -363,9 +363,9 @@ namespace rock_wall_climbing
             !hasLifecycleFlag(
                 snapshot.lifecycleFlags,
                 rock::api::core::LifecycleFlag::WorldAvailable) ||
-            snapshot.worldGeneration == 0 ||
-            snapshot.skeletonGeneration == 0 ||
-            snapshot.providerGeneration == 0) {
+            snapshot.sample.worldGeneration == 0 ||
+            snapshot.sample.skeletonGeneration == 0 ||
+            snapshot.sample.providerGeneration == 0) {
             blockers |= WorldTransition;
         }
         if (!hasLifecycleFlag(
@@ -386,10 +386,10 @@ namespace rock_wall_climbing
             snapshot.deltaSeconds <= 0.0f ||
             snapshot.deltaSeconds > MAXIMUM_FRAME_DELTA_SECONDS ||
             (_lastFrameIndex != 0 &&
-                snapshot.frameIndex <= _lastFrameIndex &&
-                snapshot.worldGeneration == _worldGeneration &&
-                snapshot.skeletonGeneration == _skeletonGeneration &&
-                snapshot.providerGeneration == _providerGeneration)) {
+                snapshot.sample.frameIndex <= _lastFrameIndex &&
+                snapshot.sample.worldGeneration == _worldGeneration &&
+                snapshot.sample.skeletonGeneration == _skeletonGeneration &&
+                snapshot.sample.providerGeneration == _providerGeneration)) {
             blockers |= InvalidTiming;
         }
         if (!std::isfinite(snapshot.gameToHavokScale) ||
@@ -445,17 +445,17 @@ namespace rock_wall_climbing
             return;
         }
 
-        _lastFrameIndex = snapshot.frameIndex;
+        _lastFrameIndex = snapshot.sample.frameIndex;
         const bool generationChanged =
-            snapshot.worldGeneration != _worldGeneration ||
-            snapshot.skeletonGeneration != _skeletonGeneration ||
-            snapshot.providerGeneration != _providerGeneration;
+            snapshot.sample.worldGeneration != _worldGeneration ||
+            snapshot.sample.skeletonGeneration != _skeletonGeneration ||
+            snapshot.sample.providerGeneration != _providerGeneration;
         if (generationChanged) {
             finishClimb(nullptr, 0.0f, false, "provider-generation");
             clearTargets();
-            _worldGeneration = snapshot.worldGeneration;
-            _skeletonGeneration = snapshot.skeletonGeneration;
-            _providerGeneration = snapshot.providerGeneration;
+            _worldGeneration = snapshot.sample.worldGeneration;
+            _skeletonGeneration = snapshot.sample.skeletonGeneration;
+            _providerGeneration = snapshot.sample.providerGeneration;
             static_cast<void>(nextTargetGeneration());
             finishLaunchObservation("provider-generation");
             logger::info(
@@ -540,24 +540,24 @@ namespace rock_wall_climbing
         _motionPositionValid = true;
 
         if (_launchObservation.active) {
-            rock::api::playercontroller::PlayerControllerStateV1 controllerState{};
+            rock::api::playercontroller::PlayerControllerState controllerState{};
             const auto controllerStateResult =
                 rockApiClient().queryPlayerControllerState(controllerState);
             const bool controllerStateValid =
                 controllerStateResult == rock::api::Status::Ok &&
                 hasControllerStateFlag(
                     controllerState.flags,
-                    rock::api::playercontroller::PlayerControllerStateFlagV1::Valid) &&
+                    rock::api::playercontroller::PlayerControllerStateFlag::Valid) &&
                 hasControllerStateFlag(
                     controllerState.flags,
-                    rock::api::playercontroller::PlayerControllerStateFlagV1::PositionValid) &&
-                controllerState.worldGeneration == snapshot.worldGeneration &&
-                controllerState.skeletonGeneration ==
-                    snapshot.skeletonGeneration &&
-                controllerState.providerGeneration ==
-                    snapshot.providerGeneration;
+                    rock::api::playercontroller::PlayerControllerStateFlag::PositionValid) &&
+                controllerState.sample.worldGeneration == snapshot.sample.worldGeneration &&
+                controllerState.sample.skeletonGeneration ==
+                    snapshot.sample.skeletonGeneration &&
+                controllerState.sample.providerGeneration ==
+                    snapshot.sample.providerGeneration;
             observeLaunchReadback(
-                snapshot.frameIndex,
+                snapshot.sample.frameIndex,
                 controllerStateResult,
                 controllerState,
                 controllerStateValid);
@@ -791,7 +791,7 @@ namespace rock_wall_climbing
         CapsuleQueryResult destinationQuery{};
         CapsuleQueryResult pathQuery{};
         const bool sampledCapsule = _config.detailedTelemetry &&
-            snapshot.frameIndex % CAPSULE_DIAGNOSTIC_FRAME_INTERVAL == 0 &&
+            snapshot.sample.frameIndex % CAPSULE_DIAGNOSTIC_FRAME_INTERVAL == 0 &&
             policy::lengthSquared(appliedStep) > 1.0e-6f;
         if (sampledCapsule) {
             // Shadow-query the actual controller shape; this is diagnostic
@@ -873,38 +873,38 @@ namespace rock_wall_climbing
     bool ClimbingRuntime::publishTargets(
         const rock_wall_climbing::Frame& snapshot) noexcept
     {
-        std::array<rock::api::touch::TouchGrabTargetV1, 2> targets{};
+        std::array<rock::api::touch::TouchGrabTarget, 2> targets{};
         const auto makeTarget = [&](
                                     const std::uint64_t targetId,
-                                    const rock::api::touch::TouchGrabTargetFlagV1
+                                    const rock::api::touch::TouchGrabTargetFlag
                                         allowedHand) {
-            rock::api::touch::TouchGrabTargetV1 target{};
+            rock::api::touch::TouchGrabTarget target{};
             target.targetId = targetId;
             target.targetGeneration = _targetGeneration;
-            target.kind = rock::api::touch::TouchGrabKindV1::FixedAnchor;
+            target.kind = rock::api::touch::TouchGrabKind::FixedAnchor;
             target.flags =
                 flag(allowedHand) |
-                flag(rock::api::touch::TouchGrabTargetFlagV1::AllowTwoHands) |
-                flag(rock::api::touch::TouchGrabTargetFlagV1::MatchAnyBody) |
-                flag(rock::api::touch::TouchGrabTargetFlagV1::FallbackOnly) |
-                flag(rock::api::touch::TouchGrabTargetFlagV1::ExcludePowerArmor) |
-                flag(rock::api::touch::TouchGrabTargetFlagV1::MatchStaticMotion) |
-                flag(rock::api::touch::TouchGrabTargetFlagV1::MatchKeyframedMotion);
+                flag(rock::api::touch::TouchGrabTargetFlag::AllowTwoHands) |
+                flag(rock::api::touch::TouchGrabTargetFlag::MatchAnyBody) |
+                flag(rock::api::touch::TouchGrabTargetFlag::FallbackOnly) |
+                flag(rock::api::touch::TouchGrabTargetFlag::ExcludePowerArmor) |
+                flag(rock::api::touch::TouchGrabTargetFlag::MatchStaticMotion) |
+                flag(rock::api::touch::TouchGrabTargetFlag::MatchKeyframedMotion);
             target.bodyId = INVALID_BODY_ID;
             target.allowedLayerMask =
                 policy::CLIMBABLE_WORLD_LAYER_MASK;
             target.leaseFrames = TARGET_LEASE_FRAMES;
-            target.worldGeneration = snapshot.worldGeneration;
-            target.skeletonGeneration = snapshot.skeletonGeneration;
-            target.providerGeneration = snapshot.providerGeneration;
+            target.worldGeneration = snapshot.sample.worldGeneration;
+            target.skeletonGeneration = snapshot.sample.skeletonGeneration;
+            target.providerGeneration = snapshot.sample.providerGeneration;
             return target;
         };
         targets[0] = makeTarget(
             RIGHT_TARGET_ID,
-            rock::api::touch::TouchGrabTargetFlagV1::AllowRightHand);
+            rock::api::touch::TouchGrabTargetFlag::AllowRightHand);
         targets[1] = makeTarget(
             LEFT_TARGET_ID,
-            rock::api::touch::TouchGrabTargetFlagV1::AllowLeftHand);
+            rock::api::touch::TouchGrabTargetFlag::AllowLeftHand);
 
         const auto result = rockApiClient().publishTargets(
             CLIMBING_SCOPE_TOKEN,
@@ -956,7 +956,7 @@ namespace rock_wall_climbing
     {
         observed = {};
         invalidated = false;
-        std::array<rock::api::touch::TouchGrabStateV1, 2> states{};
+        std::array<rock::api::touch::TouchGrabState, 2> states{};
         std::uint32_t count = 0;
         const auto result = rockApiClient().copyStates(
             CLIMBING_SCOPE_TOKEN,
@@ -985,14 +985,14 @@ namespace rock_wall_climbing
                 continue;
             }
 
-            if (state.phase == rock::api::touch::TouchGrabPhaseV1::Invalidated ||
-                state.phase == rock::api::touch::TouchGrabPhaseV1::Yielded) {
+            if (state.phase == rock::api::touch::TouchGrabPhase::Invalidated ||
+                state.phase == rock::api::touch::TouchGrabPhase::Yielded) {
                 invalidated = true;
                 continue;
             }
             const bool targetHeld =
-                state.phase == rock::api::touch::TouchGrabPhaseV1::Held &&
-                state.kind == rock::api::touch::TouchGrabKindV1::FixedAnchor &&
+                state.phase == rock::api::touch::TouchGrabPhase::Held &&
+                state.kind == rock::api::touch::TouchGrabKind::FixedAnchor &&
                 state.bodyId != INVALID_BODY_ID;
             if (!targetHeld) {
                 continue;
@@ -1001,9 +1001,9 @@ namespace rock_wall_climbing
             const auto activeHands = policy::decodeActiveHands(
                 state.activeHandMask,
                 static_cast<std::uint32_t>(
-                    rock::api::touch::TouchGrabHandMaskV1::Right),
+                    rock::api::touch::TouchGrabHandMask::Right),
                 static_cast<std::uint32_t>(
-                    rock::api::touch::TouchGrabHandMaskV1::Left));
+                    rock::api::touch::TouchGrabHandMask::Left));
             const auto mergeHand = [&](
                                        const std::size_t handIndex,
                                        const bool active) {
@@ -1023,7 +1023,7 @@ namespace rock_wall_climbing
                     policy::lengthSquared(normal);
                 hand.normalValid = hasTouchGrabStateFlag(
                                        state.flags,
-                                       rock::api::touch::TouchGrabStateFlagV1::
+                                       rock::api::touch::TouchGrabStateFlag::
                                            ContactNormalValid) &&
                                    policy::finite(normal) &&
                                    normalLengthSquared >= 0.25f &&
@@ -1050,7 +1050,7 @@ namespace rock_wall_climbing
                 continue;
             }
 
-            rock::api::grab::HandInteractionStateV1 interaction{};
+            rock::api::grab::HandInteractionState interaction{};
             const auto interactionResult =
                 rockApiClient().queryHandInteractionState(
                     PROVIDER_HANDS[index],
@@ -1059,19 +1059,19 @@ namespace rock_wall_climbing
                 interactionResult == rock::api::Status::Ok &&
                 interaction.hand == PROVIDER_HANDS[index] &&
                 interaction.phase ==
-                    rock::api::grab::HandInteractionPhaseV1::Holding &&
+                    rock::api::grab::HandInteractionPhase::Holding &&
                 hasHandInteractionFlag(
                     interaction.flags,
-                    rock::api::grab::HandInteractionFlagV1::Valid) &&
+                    rock::api::grab::HandInteractionFlag::Valid) &&
                 hasHandInteractionFlag(
                     interaction.flags,
-                    rock::api::grab::HandInteractionFlagV1::TouchGrab) &&
+                    rock::api::grab::HandInteractionFlag::TouchGrab) &&
                 hasHandInteractionFlag(
                     interaction.flags,
-                    rock::api::grab::HandInteractionFlagV1::FixedSurfaceLatch) &&
+                    rock::api::grab::HandInteractionFlag::FixedSurfaceLatch) &&
                 hasHandInteractionFlag(
                     interaction.flags,
-                    rock::api::grab::HandInteractionFlagV1::SurfaceAnchorValid) &&
+                    rock::api::grab::HandInteractionFlag::SurfaceAnchorValid) &&
                 interaction.primaryBodyId == hand.bodyId &&
                 interaction.worldGeneration == _worldGeneration &&
                 interaction.skeletonGeneration == _skeletonGeneration &&
@@ -1120,17 +1120,17 @@ namespace rock_wall_climbing
             const policy::Vec3 direction =
                 policy::divide(remainingStep, distance);
 
-            rock::api::collision::WorldRaycastRequestV1 request{};
+            rock::api::collision::WorldRaycastRequest request{};
             request.startGame = providerPoint(
                 policy::add(hmdPosition, appliedStep));
             request.directionGame = providerPoint(direction);
             request.maxDistanceGame =
                 distance + _config.headClearanceGameUnits;
-            request.worldGeneration = snapshot.worldGeneration;
-            request.skeletonGeneration = snapshot.skeletonGeneration;
-            request.providerGeneration = snapshot.providerGeneration;
+            request.worldGeneration = snapshot.sample.worldGeneration;
+            request.skeletonGeneration = snapshot.sample.skeletonGeneration;
+            request.providerGeneration = snapshot.sample.providerGeneration;
 
-            rock::api::collision::WorldRaycastResultV1 result{};
+            rock::api::collision::WorldRaycastResult result{};
             if (rockApiClient().queryWorldRaycast(request, result) !=
                 rock::api::Status::Ok) {
                 return false;
@@ -1165,7 +1165,7 @@ namespace rock_wall_climbing
             policy::Vec3 slidingMotion{};
             if (!hasWorldRaycastResultFlag(
                     result.flags,
-                    rock::api::collision::WorldRaycastResultFlagV1::NormalValid) ||
+                    rock::api::collision::WorldRaycastResultFlag::NormalValid) ||
                 !policy::slideAlongCollisionPlane(
                     remainingStep,
                     hitNormal,
@@ -1196,7 +1196,7 @@ namespace rock_wall_climbing
     void ClimbingRuntime::observeLaunchReadback(
         const std::uint64_t frameIndex,
         const rock::api::Status result,
-        const rock::api::playercontroller::PlayerControllerStateV1& state,
+        const rock::api::playercontroller::PlayerControllerState& state,
         const bool stateValid) noexcept
     {
         auto& observation = _launchObservation;
@@ -1210,7 +1210,7 @@ namespace rock_wall_climbing
         const bool velocityValid = stateValid &&
             hasControllerStateFlag(
                 state.flags,
-                rock::api::playercontroller::PlayerControllerStateFlagV1::VelocityValid);
+                rock::api::playercontroller::PlayerControllerStateFlag::VelocityValid);
         if (velocityValid) {
             const policy::Vec3 velocity = point(state.velocityGame);
             if (policy::finite(velocity)) {
@@ -1222,7 +1222,7 @@ namespace rock_wall_climbing
                 ++observation.validFrames;
                 observation.supportedFrames += hasControllerStateFlag(
                     state.flags,
-                    rock::api::playercontroller::PlayerControllerStateFlagV1::Supported) ?
+                    rock::api::playercontroller::PlayerControllerStateFlag::Supported) ?
                     1u : 0u;
             }
         }
@@ -1722,7 +1722,7 @@ namespace rock_wall_climbing
                     _config.launch) :
                 policy::Vec3{};
 
-        rock::api::playercontroller::PlayerControllerStateV1 controllerState{};
+        rock::api::playercontroller::PlayerControllerState controllerState{};
         rock::api::Status controllerStateResult =
             rock::api::Status::NotReady;
         bool controllerStateValid = false;
@@ -1734,13 +1734,13 @@ namespace rock_wall_climbing
                 controllerStateResult == rock::api::Status::Ok &&
                 hasControllerStateFlag(
                     controllerState.flags,
-                    rock::api::playercontroller::PlayerControllerStateFlagV1::Valid) &&
+                    rock::api::playercontroller::PlayerControllerStateFlag::Valid) &&
                 hasControllerStateFlag(
                     controllerState.flags,
-                    rock::api::playercontroller::PlayerControllerStateFlagV1::VelocityValid) &&
-                controllerState.worldGeneration == _worldGeneration &&
-                controllerState.skeletonGeneration == _skeletonGeneration &&
-                controllerState.providerGeneration == _providerGeneration;
+                    rock::api::playercontroller::PlayerControllerStateFlag::VelocityValid) &&
+                controllerState.sample.worldGeneration == _worldGeneration &&
+                controllerState.sample.skeletonGeneration == _skeletonGeneration &&
+                controllerState.sample.providerGeneration == _providerGeneration;
             if (controllerStateValid) {
                 currentVelocityGame = point(controllerState.velocityGame);
                 controllerStateValid = policy::finite(currentVelocityGame);
@@ -1760,7 +1760,7 @@ namespace rock_wall_climbing
         bool nativeJumpRequested = false;
         rock::api::Status nativeJumpResult = rock::api::Status::NotReady;
         if (controllerStateValid && nativeJumpHeight > 0.0f) {
-            rock::api::playercontroller::PlayerControllerJumpRequestV1 request{};
+            rock::api::playercontroller::PlayerControllerJumpRequest request{};
             request.heightGameUnits = nativeJumpHeight;
             request.worldGeneration = _worldGeneration;
             request.skeletonGeneration = _skeletonGeneration;

@@ -23,7 +23,7 @@ namespace rock_wall_climbing
 
         [[nodiscard]] rock::api::Status publishTargets(
             std::uint64_t scopeToken,
-            std::span<const rock::api::touch::TouchGrabTargetV1>
+            std::span<const rock::api::touch::TouchGrabTarget>
                 targets) const noexcept;
 
         [[nodiscard]] rock::api::Status clearTargets(
@@ -31,41 +31,41 @@ namespace rock_wall_climbing
 
         [[nodiscard]] rock::api::Status copyStates(
             std::uint64_t scopeToken,
-            std::span<rock::api::touch::TouchGrabStateV1> states,
+            std::span<rock::api::touch::TouchGrabState> states,
             std::uint32_t& outCount) const noexcept;
 
         [[nodiscard]] rock::api::Status
             queryHandInteractionState(
                 rock::api::Hand hand,
-                rock::api::grab::HandInteractionStateV1& state)
+                rock::api::grab::HandInteractionState& state)
                 const noexcept;
 
         [[nodiscard]] rock::api::Status queryWorldRaycast(
-            const rock::api::collision::WorldRaycastRequestV1& request,
-            rock::api::collision::WorldRaycastResultV1& result)
+            const rock::api::collision::WorldRaycastRequest& request,
+            rock::api::collision::WorldRaycastResult& result)
             const noexcept;
 
         [[nodiscard]] rock::api::Status
             queryPlayerControllerState(
-                rock::api::playercontroller::PlayerControllerStateV1& state)
+                rock::api::playercontroller::PlayerControllerState& state)
                 const noexcept;
 
         [[nodiscard]] rock::api::Status
             requestPlayerControllerJump(
-                const rock::api::playercontroller::PlayerControllerJumpRequestV1& request)
+                const rock::api::playercontroller::PlayerControllerJumpRequest& request)
                 const noexcept;
 
     private:
         rock::api::Client _client;
-        const rock::api::core::ApiV1* _core{};
-        const rock::api::hands::ApiV1* _hands{};
-        const rock::api::grab::ApiV1* _grab{};
-        const rock::api::touch::ApiV1* _touch{};
-        const rock::api::collision::ApiV1* _collision{};
-        const rock::api::playercontroller::ApiV1* _controller{};
+        const rock::api::core::Api* _core{};
+        const rock::api::hands::Api* _hands{};
+        const rock::api::grab::Api* _grab{};
+        const rock::api::touch::Api* _touch{};
+        const rock::api::collision::Api* _collision{};
+        const rock::api::playercontroller::Api* _controller{};
         FrameCallback _callback{};
         void* _callbackData{};
-        static void ROCK_CALL receiveFrame(const rock::api::core::SnapshotV1*,void*);
+        static void ROCK_CALL receiveFrame(const rock::api::core::Snapshot*,void*);
 
         std::uint64_t _ownerToken{ 0 };
         std::uint64_t _frameCallbackToken{ 0 };

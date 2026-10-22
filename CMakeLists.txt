@@ -48,11 +48,11 @@ if(NOT EXISTS
     "CommonLibF4VR path not found in '${COMMON_LIB_F4VR_PATH_SELECTED}'")
 endif()
 
-set(ROCK_SDK_INCLUDE "${WORKSPACE_ROOT}/my_frameworks_and_sdks/RPS_SDK/SDK/ROCK/include")
-if(NOT EXISTS "${ROCK_SDK_INCLUDE}/ROCK/Client.h")
-  message(FATAL_ERROR "The modular ROCK SDK is required")
+set(ROCK_INCLUDE_DIR "${WORKSPACE_ROOT}/main_projects/ROCK/include" CACHE PATH "ROCK public include directory")
+if(NOT EXISTS "${ROCK_INCLUDE_DIR}/ROCK/Client.h")
+  message(FATAL_ERROR "ROCK_INCLUDE_DIR does not contain ROCK/Client.h: ${ROCK_INCLUDE_DIR}")
 endif()
-include_directories("${ROCK_SDK_INCLUDE}")
+include_directories("${ROCK_INCLUDE_DIR}")
 
 project(${NAME} VERSION ${VERSION} LANGUAGES CXX)
 
@@ -122,7 +122,7 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
 )
 target_include_directories(${PROJECT_NAME} PRIVATE
   "${BUILD_DIR}/include"
-  "${ROCK_SDK_INCLUDE}"
+  "${ROCK_INCLUDE_DIR}"
   "${SOURCE_DIR}"
 )
 

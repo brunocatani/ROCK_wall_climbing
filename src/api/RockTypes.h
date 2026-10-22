@@ -8,7 +8,7 @@
 
 namespace rock_wall_climbing {
     enum class FrameFlag : std::uint32_t { DeltaSecondsValid=1, HmdTransformValid=2, RightHandTransformValid=128, LeftHandTransformValid=256 };
-    struct Frame : rock::api::core::SnapshotV1 {
+    struct Frame : rock::api::core::Snapshot {
         float gameToHavokScale{};
         float havokToGameScale{};
         std::uint32_t physicsScaleRevision{};

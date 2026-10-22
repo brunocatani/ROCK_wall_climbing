@@ -133,7 +133,7 @@ extern "C" DLLEXPORT bool F4SEAPI F4SEPlugin_Load(
         }
 
         rock_wall_climbing::logger::info(
-            "Load complete; waiting for GameLoaded before registering the ROCK V1 climbing consumer.");
+            "Load complete; waiting for GameLoaded before registering the ROCK climbing consumer.");
         return true;
     } catch (const std::exception& error) {
         reportPluginBoundaryFailure("F4SEPlugin_Load", error.what());

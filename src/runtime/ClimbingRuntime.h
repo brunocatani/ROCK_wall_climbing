@@ -186,7 +186,7 @@ namespace rock_wall_climbing
         void observeLaunchReadback(
             std::uint64_t frameIndex,
             rock::api::Status result,
-            const rock::api::playercontroller::PlayerControllerStateV1& state,
+            const rock::api::playercontroller::PlayerControllerState& state,
             bool stateValid) noexcept;
         void finishLaunchObservation(const char* reason) noexcept;
 
