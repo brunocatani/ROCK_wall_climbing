@@ -2,8 +2,11 @@
 
 #include "support/Logger.h"
 
+#include <RPS/Runtime/RequiredUpdate.h>
+
 #include <cstring>
 #include <cmath>
+#include <string>
 #include <Windows.h>
 
 namespace rock_wall_climbing
@@ -14,21 +17,54 @@ namespace rock_wall_climbing
         return client;
     }
 
+    namespace
+    {
+        // A loaded ROCK that does not serve the API this addon was built for
+        // stops the game at the main menu (RPS/Runtime/RequiredUpdate.h); a
+        // missing ROCK does not. The addon requests the exact versions its ROCK
+        // headers declare, so every version refusal is a real mismatch.
+        bool isVersionRefusal(const rock::api::Status status) noexcept
+        {
+            using rock::api::Status;
+            return status==Status::UnknownInterface || status==Status::UnsupportedMajor ||
+                status==Status::UnsupportedMinor || status==Status::TableTooSmall || status==Status::InvalidSize;
+        }
+
+        void reportRockMismatch(const char* reason) noexcept
+        {
+            try {
+                logger::critical("ROCK Wall Climbing does not work with the loaded ROCK ({}): the game stops at the main menu until they match",reason);
+                RPS::Runtime::RequiredUpdate::report(L"ROCK Wall Climbing " +
+                    std::wstring(Version::NAME.begin(),Version::NAME.end()) +
+                    L" does not work with the installed ROCK: they were built for different ROCK versions. Install "
+                    L"matching versions of ROCK and ROCK Wall Climbing.");
+            } catch (...) {}
+        }
+    }
+
     bool RockApiClient::initialize() noexcept {
         if (ready()) return true;
         const auto module=GetModuleHandleA("ROCK.dll");
-        const auto query=module?reinterpret_cast<rock::api::QueryInterfaceV1>(GetProcAddress(module,rock::api::kQueryExportName)):nullptr;
-        if (_client.connect(query,"ROCK_Wall_Climbing")!=rock::api::Status::Ok) return false;
+        if (!module) return false;
+        const auto query=reinterpret_cast<rock::api::QueryInterfaceV1>(GetProcAddress(module,rock::api::kQueryExportName));
+        if (!query) { reportRockMismatch("no ROCKAPI_QueryInterfaceV1 export"); return false; }
+        if (const auto status=_client.connect(query,"ROCK_Wall_Climbing"); status!=rock::api::Status::Ok) {
+            if (isVersionRefusal(status)) reportRockMismatch("Core refused");
+            return false;
+        }
         _ownerToken=_client.owner();
         namespace api=rock::api;
         constexpr auto bits=[](auto... values) { return (static_cast<std::uint32_t>(values) | ...); };
-        if (_client.acquire(bits(api::core::Permission::Read,api::core::Permission::Callbacks),_core)!=api::Status::Ok ||
-            _client.acquire(bits(api::hands::Permission::Read),_hands)!=api::Status::Ok ||
-            _client.acquire(bits(api::grab::Permission::Read),_grab)!=api::Status::Ok ||
-            _client.acquire(bits(api::touch::Permission::Read,api::touch::Permission::Write),_touch)!=api::Status::Ok ||
-            _client.acquire(bits(api::collision::Permission::Read),_collision)!=api::Status::Ok ||
-            _client.acquire(bits(api::playercontroller::Permission::Read,api::playercontroller::Permission::Write),_controller)!=api::Status::Ok) {
-            logger::error("ROCK is missing a required modular climbing interface"); shutdown(); return false;
+        auto status=api::Status::Ok;
+        if ((status=_client.acquire(bits(api::core::Permission::Read,api::core::Permission::Callbacks),_core))!=api::Status::Ok ||
+            (status=_client.acquire(bits(api::hands::Permission::Read),_hands))!=api::Status::Ok ||
+            (status=_client.acquire(bits(api::grab::Permission::Read),_grab))!=api::Status::Ok ||
+            (status=_client.acquire(bits(api::touch::Permission::Read,api::touch::Permission::Write),_touch))!=api::Status::Ok ||
+            (status=_client.acquire(bits(api::collision::Permission::Read),_collision))!=api::Status::Ok ||
+            (status=_client.acquire(bits(api::playercontroller::Permission::Read,api::playercontroller::Permission::Write),_controller))!=api::Status::Ok) {
+            logger::error("ROCK is missing a required modular climbing interface: status {}",static_cast<std::uint32_t>(status));
+            if (isVersionRefusal(status)) reportRockMismatch("an interface refused");
+            shutdown(); return false;
         }
         logger::info("Registered modular ROCK climbing owner={:016X}",_ownerToken);
         return true;

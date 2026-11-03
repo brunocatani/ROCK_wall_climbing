@@ -53,6 +53,11 @@ if(NOT EXISTS "${ROCK_INCLUDE_DIR}/ROCK/Client.h")
   message(FATAL_ERROR "ROCK_INCLUDE_DIR does not contain ROCK/Client.h: ${ROCK_INCLUDE_DIR}")
 endif()
 include_directories("${ROCK_INCLUDE_DIR}")
+# RPS Framework's header-only required-update stop (RPS/Runtime/RequiredUpdate.h).
+set(RPS_FRAMEWORK_INCLUDE_DIR "${WORKSPACE_ROOT}/my_frameworks_and_sdks/RPS_Framework/include" CACHE PATH "RPS Framework public include directory")
+if(NOT EXISTS "${RPS_FRAMEWORK_INCLUDE_DIR}/RPS/Runtime/RequiredUpdate.h")
+  message(FATAL_ERROR "RPS_FRAMEWORK_INCLUDE_DIR does not contain RPS/Runtime/RequiredUpdate.h: ${RPS_FRAMEWORK_INCLUDE_DIR}")
+endif()
 
 project(${NAME} VERSION ${VERSION} LANGUAGES CXX)
 
@@ -123,6 +128,7 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
 target_include_directories(${PROJECT_NAME} PRIVATE
   "${BUILD_DIR}/include"
   "${ROCK_INCLUDE_DIR}"
+  "${RPS_FRAMEWORK_INCLUDE_DIR}"
   "${SOURCE_DIR}"
 )
 
