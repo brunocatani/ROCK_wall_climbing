@@ -37,9 +37,9 @@ The mod uses compiled defaults when this file is absent. To customize movement r
 <details>
 <summary>Building from source</summary>
 
-Requires Windows x64, Visual Studio 2022 with the v143 C++ toolset, CMake 4.2 or newer, vcpkg, CommonLibF4VR, and the modular RPS SDK headers. The project uses C++23.
+Requires Windows x64, Visual Studio 2022 with the v143 C++ toolset, CMake 4.2 or newer, vcpkg, CommonLibF4VR, ROCK's public headers (`include/ROCK/`) and RPS Framework's `include/` headers. The project uses C++23.
 
-Copy [CMakeUserPresets.json.template](CMakeUserPresets.json.template) to `CMakeUserPresets.json`. Configure your CommonLibF4VR path and deployment destination; current CMake reads the modular SDK at `my_frameworks_and_sdks/RPS_SDK/SDK/ROCK/include` beneath the workspace root. The old template key `ROCK_SOURCE_INCLUDE_DIR` is no longer used. Adjust the vcpkg path in your local presets if needed. The `custom-fast` preset copies the plugin to the mod folder you configure.
+Copy [CMakeUserPresets.json.template](CMakeUserPresets.json.template) to `CMakeUserPresets.json`. Configure your CommonLibF4VR path and deployment destination; set `ROCK_INCLUDE_DIR` to ROCK's `include/` folder and `RPS_FRAMEWORK_INCLUDE_DIR` to RPS Framework's `include/` folder when they are not where `CMakeLists.txt` looks by default. The old template key `ROCK_SOURCE_INCLUDE_DIR` is no longer used. Adjust the vcpkg path in your local presets if needed. The `custom-fast` preset copies the plugin to the mod folder you configure.
 
 ```powershell
 cmake --preset custom-fast -B build-fast
