@@ -53,11 +53,9 @@ if(NOT EXISTS "${ROCK_INCLUDE_DIR}/ROCK/Client.h")
   message(FATAL_ERROR "ROCK_INCLUDE_DIR does not contain ROCK/Client.h: ${ROCK_INCLUDE_DIR}")
 endif()
 include_directories("${ROCK_INCLUDE_DIR}")
-# RPS Framework's header-only required-update stop (RPS/Runtime/RequiredUpdate.h).
-set(RPS_FRAMEWORK_INCLUDE_DIR "${WORKSPACE_ROOT}/my_frameworks_and_sdks/RPS_Framework/include" CACHE PATH "RPS Framework public include directory")
-if(NOT EXISTS "${RPS_FRAMEWORK_INCLUDE_DIR}/RPS/Runtime/RequiredUpdate.h")
-  message(FATAL_ERROR "RPS_FRAMEWORK_INCLUDE_DIR does not contain RPS/Runtime/RequiredUpdate.h: ${RPS_FRAMEWORK_INCLUDE_DIR}")
-endif()
+# RPS Framework's staged package: the settings file (RPS::Settings) and the
+# header-only required-update stop (RPS/Runtime/RequiredUpdate.h).
+set(RPSFramework_DIR "${WORKSPACE_ROOT}/my_frameworks_and_sdks/RPS_Framework/build-fast/stage/lib/cmake/RPSFramework" CACHE PATH "RPS Framework staged package")
 
 project(${NAME} VERSION ${VERSION} LANGUAGES CXX)
 
@@ -89,9 +87,13 @@ add_library(ROCKWallClimbingCore STATIC
   "${SOURCE_DIR}/runtime/ClimbingPolicy.h"
   "${SOURCE_DIR}/runtime/VelocityHistory.cpp"
   "${SOURCE_DIR}/runtime/VelocityHistory.h"
+  "${SOURCE_DIR}/support/ConfigSettings.cpp"
+  "${SOURCE_DIR}/support/Config.h"
 )
 target_compile_features(ROCKWallClimbingCore PUBLIC cxx_std_23)
 target_include_directories(ROCKWallClimbingCore PUBLIC "${SOURCE_DIR}")
+find_package(RPSFramework CONFIG REQUIRED)
+target_link_libraries(ROCKWallClimbingCore PUBLIC RPS::Settings)
 target_compile_options(ROCKWallClimbingCore PRIVATE
   /sdl
   /utf-8
@@ -128,7 +130,6 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
 target_include_directories(${PROJECT_NAME} PRIVATE
   "${BUILD_DIR}/include"
   "${ROCK_INCLUDE_DIR}"
-  "${RPS_FRAMEWORK_INCLUDE_DIR}"
   "${SOURCE_DIR}"
 )
 
@@ -210,6 +211,24 @@ if(BUILD_ROCK_WALL_CLIMBING_TESTS)
   add_test(
     NAME ROCKWallClimbingPolicyTests
     COMMAND "$<TARGET_FILE:ROCKWallClimbingPolicyTests>")
+  add_executable(ROCKWallClimbingSettingsTests
+    "${ROOT_DIR}/tests/ConfigSettingsTests.cpp")
+  target_compile_features(ROCKWallClimbingSettingsTests PRIVATE cxx_std_23)
+  target_link_libraries(ROCKWallClimbingSettingsTests PRIVATE ROCKWallClimbingCore)
+  target_compile_definitions(ROCKWallClimbingSettingsTests PRIVATE
+    ROCK_WALL_CLIMBING_SETTINGS_TEST_DIR="${BUILD_DIR}/settings-test")
+  target_compile_options(ROCKWallClimbingSettingsTests PRIVATE
+    /sdl
+    /utf-8
+    /permissive-
+    /Zc:__cplusplus
+    /Zc:preprocessor
+    /W4
+    /UNDEBUG
+  )
+  add_test(
+    NAME ROCKWallClimbingSettingsTests
+    COMMAND "$<TARGET_FILE:ROCKWallClimbingSettingsTests>" "${ROOT_DIR}/data/config")
 endif()
 
 # Tests share build-fast but stay out of the default build, so building and deploying the

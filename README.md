@@ -29,26 +29,29 @@ Touch a surface, hold the grab button, and move your hand opposite the direction
 The active configuration is in your Documents folder:
 
 ```text
-My Games/Fallout4VR/Mods_Config/ROCK_Wall_Climbing/ROCK_Wall_Climbing.ini
+My Games/Fallout4VR/Mods_Config/ROCK_Wall_Climbing/ROCK_Wall_Climbing.toml
 ```
 
-The mod uses compiled defaults when this file is absent. To customize movement response, smoothing, or launch strength, create the file with the sections and keys you want to change. See the [configuration reference](data/config/ROCK_Wall_Climbing_example.ini) for available settings. Reload your save after editing.
+The mod creates this file with every option at its default the first time it starts, and later adds options a new version brings. Each option has its help above it as `##` lines, which the mod rewrites; your own notes on single-`#` lines above an option stay with it. An option the mod no longer reads moves to a commented block at the end of the file. Edit it to change movement response, smoothing or launch strength, then reload your save. The [configuration reference](data/config/ROCK_Wall_Climbing_example.toml) shows every option.
+
+Upgrading from a version that used `ROCK_Wall_Climbing.ini`: the first start carries every option you changed into the TOML file and deletes the INI. Nothing to do by hand.
 
 <details>
 <summary>Building from source</summary>
 
-Requires Windows x64, Visual Studio 2022 with the v143 C++ toolset, CMake 4.2 or newer, vcpkg, CommonLibF4VR, ROCK's public headers (`include/ROCK/`) and RPS Framework's `include/` headers. The project uses C++23.
+Requires Windows x64, Visual Studio 2022 with the v143 C++ toolset, CMake 4.2 or newer, vcpkg, CommonLibF4VR, ROCK's public headers (`include/ROCK/`) and RPS Framework, built first with its own `custom-fast` preset, which stages the package this mod links for its settings file. The project uses C++23.
 
-Copy [CMakeUserPresets.json.template](CMakeUserPresets.json.template) to `CMakeUserPresets.json`. Configure your CommonLibF4VR path and deployment destination; set `ROCK_INCLUDE_DIR` to ROCK's `include/` folder and `RPS_FRAMEWORK_INCLUDE_DIR` to RPS Framework's `include/` folder when they are not where `CMakeLists.txt` looks by default. The old template key `ROCK_SOURCE_INCLUDE_DIR` is no longer used. Adjust the vcpkg path in your local presets if needed. The `custom-fast` preset copies the plugin to the mod folder you configure.
+Copy [CMakeUserPresets.json.template](CMakeUserPresets.json.template) to `CMakeUserPresets.json`. Configure your CommonLibF4VR path and deployment destination; set `ROCK_INCLUDE_DIR` to ROCK's `include/` folder and `RPSFramework_DIR` to `build-fast/stage/lib/cmake/RPSFramework` in RPS Framework when they are not where `CMakeLists.txt` looks by default. The old template key `ROCK_SOURCE_INCLUDE_DIR` is no longer used. Adjust the vcpkg path in your local presets if needed. The `custom-fast` preset copies the plugin to the mod folder you configure.
 
 ```powershell
-cmake --preset custom-fast -B build-fast
-cmake --build build-fast --config Release --target ROCK_Wall_Climbing -- /m:1 /p:CL_MPCount=2
+cmake --preset custom-fast
+cmake --build build-fast --config Release --target ROCK_Wall_Climbing
 
-cmake --preset custom-tests -B build-tests
-cmake --build build-tests --config Release --target ROCKWallClimbingPolicyTests -- /m:1 /p:CL_MPCount=2
-ctest --test-dir build-tests -C Release --output-on-failure -j 4
+cmake --build build-fast --config Release --target build_tests
+ctest --test-dir build-fast -C Release --output-on-failure
 ```
+
+The tests cover the climbing policy and the settings file. After changing an option, regenerate the reference with `ROCKWallClimbingSettingsTests --write-examples data/config`; the test fails while it differs.
 
 </details>
 

@@ -5,7 +5,6 @@
   "dependencies": [
     "rapidcsv",
     "rsm-mmio",
-    "simpleini",
     "spdlog",
     "xbyak"
   ],
