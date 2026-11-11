@@ -32,7 +32,13 @@ namespace rock_wall_climbing
         constexpr std::uint32_t INVALID_BODY_ID = 0x7FFF'FFFFu;
         constexpr float MAXIMUM_FRAME_DELTA_SECONDS = 0.1f;
         constexpr std::uint32_t MAXIMUM_HEAD_MOTION_PASSES = 3;
-        constexpr std::uint32_t LAUNCH_OBSERVATION_FRAMES = 8;
+        // A flight that never lands (a fall out of the world) is handed back
+        // to the game; the handover is logged.
+        constexpr float MAXIMUM_FLIGHT_SECONDS = 12.0f;
+        // The ground ray reaches this far below the feet.
+        constexpr float GROUND_PROBE_BELOW_FEET = 4.0f;
+        // Head height above the feet used when tracking reports less.
+        constexpr float MINIMUM_HEAD_HEIGHT = 40.0f;
         constexpr std::uint32_t CAPSULE_DIAGNOSTIC_FRAME_INTERVAL = 16;
         constexpr std::uintptr_t CAPSULE_CLEARANCE_QUERY_RVA = 0x1E21030;
         constexpr std::uintptr_t PROXY_GET_WORLD_RVA = 0x1E4DEC0;
@@ -91,13 +97,6 @@ namespace rock_wall_climbing
         [[nodiscard]] constexpr bool hasTouchGrabStateFlag(
             const std::uint32_t flags,
             const rock::api::touch::TouchGrabStateFlag value) noexcept
-        {
-            return (flags & static_cast<std::uint32_t>(value)) != 0;
-        }
-
-        [[nodiscard]] constexpr bool hasControllerStateFlag(
-            const std::uint32_t flags,
-            const rock::api::playercontroller::PlayerControllerStateFlag value) noexcept
         {
             return (flags & static_cast<std::uint32_t>(value)) != 0;
         }
@@ -250,12 +249,11 @@ namespace rock_wall_climbing
     {
         try {
             if (_sessionActive) {
-                finishClimb(nullptr, 0.0f, false, "session-refresh");
+                finishClimb(nullptr, "session-refresh");
                 clearTargets();
             }
             static_cast<void>(_config.reload());
             _sessionActive = true;
-            _launchObservation = {};
             _lastBlockers = UINT32_MAX;
             static_cast<void>(connect());
         } catch (const std::exception& error) {
@@ -272,13 +270,12 @@ namespace rock_wall_climbing
     void ClimbingRuntime::endSession() noexcept
     {
         _sessionActive = false;
-        finishClimb(nullptr, 0.0f, false, "session-ended");
+        finishClimb(nullptr, "session-ended");
         clearTargets();
         _worldGeneration = 0;
         _skeletonGeneration = 0;
         _providerGeneration = 0;
         _lastFrameIndex = 0;
-        _launchObservation = {};
         _lastBlockers = UINT32_MAX;
     }
 
@@ -303,20 +300,12 @@ namespace rock_wall_climbing
             logger::error(
                 "Climbing frame failed closed after exception: {}.",
                 error.what());
-            runtime->finishClimb(
-                nullptr,
-                0.0f,
-                false,
-                "callback-exception");
+            runtime->finishClimb(nullptr, "callback-exception");
             runtime->clearTargets();
         } catch (...) {
             logger::error(
                 "Climbing frame failed closed after an unknown exception.");
-            runtime->finishClimb(
-                nullptr,
-                0.0f,
-                false,
-                "callback-exception");
+            runtime->finishClimb(nullptr, "callback-exception");
             runtime->clearTargets();
         }
     }
@@ -439,8 +428,7 @@ namespace rock_wall_climbing
         const std::uint32_t blockers = snapshotBlockers(snapshot);
         observeBlockers(blockers);
         if (blockers != 0) {
-            finishLaunchObservation("operational-gate");
-            finishClimb(nullptr, 0.0f, false, "operational-gate");
+            finishClimb(nullptr,"operational-gate");
             clearTargets();
             return;
         }
@@ -451,13 +439,12 @@ namespace rock_wall_climbing
             snapshot.sample.skeletonGeneration != _skeletonGeneration ||
             snapshot.sample.providerGeneration != _providerGeneration;
         if (generationChanged) {
-            finishClimb(nullptr, 0.0f, false, "provider-generation");
+            finishClimb(nullptr,"provider-generation");
             clearTargets();
             _worldGeneration = snapshot.sample.worldGeneration;
             _skeletonGeneration = snapshot.sample.skeletonGeneration;
             _providerGeneration = snapshot.sample.providerGeneration;
             static_cast<void>(nextTargetGeneration());
-            finishLaunchObservation("provider-generation");
             logger::info(
                 "Climbing generations changed to world={} skeleton={} provider={} targetGeneration={}.",
                 _worldGeneration,
@@ -467,7 +454,7 @@ namespace rock_wall_climbing
         }
 
         if (!publishTargets(snapshot)) {
-            finishClimb(nullptr, 0.0f, false, "target-publication");
+            finishClimb(nullptr,"target-publication");
             clearTargets();
             return;
         }
@@ -475,12 +462,12 @@ namespace rock_wall_climbing
         std::array<ObservedHand, 2> observed{};
         bool invalidated = false;
         if (!observeHands(observed, invalidated)) {
-            finishClimb(nullptr, 0.0f, false, "state-readback");
+            finishClimb(nullptr,"state-readback");
             clearTargets();
             return;
         }
         if (invalidated) {
-            finishClimb(nullptr, 0.0f, false, "target-invalidated");
+            finishClimb(nullptr,"target-invalidated");
             clearTargets();
             static_cast<void>(nextTargetGeneration());
             logger::warn(
@@ -492,8 +479,7 @@ namespace rock_wall_climbing
         const std::uint32_t currentHeldCount =
             static_cast<std::uint32_t>(observed[0].held) +
             static_cast<std::uint32_t>(observed[1].held);
-        if (currentHeldCount == 0 && !_climbing && !_gravityOwned &&
-            !_launchObservation.active) {
+        if (currentHeldCount == 0 && !_climbing && !_gravityOwned) {
             _hands = {};
             return;
         }
@@ -507,7 +493,7 @@ namespace rock_wall_climbing
                     controllerStageName(deepestStage));
                 _lastControllerFailure = deepestStage;
             }
-            finishClimb(nullptr, 0.0f, false, "controller-unavailable");
+            finishClimb(nullptr,"controller-unavailable");
             clearTargets();
             return;
         }
@@ -539,33 +525,14 @@ namespace rock_wall_climbing
         _previousSubmittedPosition = access.playerPosition;
         _motionPositionValid = true;
 
-        if (_launchObservation.active) {
-            rock::api::playercontroller::PlayerControllerState controllerState{};
-            const auto controllerStateResult =
-                rockApiClient().queryPlayerControllerState(controllerState);
-            const bool controllerStateValid =
-                controllerStateResult == rock::api::Status::Ok &&
-                hasControllerStateFlag(
-                    controllerState.flags,
-                    rock::api::playercontroller::PlayerControllerStateFlag::Valid) &&
-                hasControllerStateFlag(
-                    controllerState.flags,
-                    rock::api::playercontroller::PlayerControllerStateFlag::PositionValid) &&
-                controllerState.sample.worldGeneration == snapshot.sample.worldGeneration &&
-                controllerState.sample.skeletonGeneration ==
-                    snapshot.sample.skeletonGeneration &&
-                controllerState.sample.providerGeneration ==
-                    snapshot.sample.providerGeneration;
-            observeLaunchReadback(
-                snapshot.sample.frameIndex,
-                controllerStateResult,
-                controllerState,
-                controllerStateValid);
-        }
-
-        if (currentHeldCount == 0 && !_climbing && !_gravityOwned) {
-            _hands = {};
-            return;
+        if (_air.phase != AirPhase::None) {
+            if (currentHeldCount == 0) {
+                updateAir(snapshot, access);
+                return;
+            }
+            // A hand caught a surface: the flight or lift ends where it is
+            // and climbing starts from this position.
+            endAir("caught");
         }
 
         const std::array<policy::Vec3, 2> currentHandOffsets{
@@ -578,7 +545,7 @@ namespace rock_wall_climbing
         };
         if (!validCoordinate(currentHandOffsets[0]) ||
             !validCoordinate(currentHandOffsets[1])) {
-            finishClimb(&access, 0.0f, false, "hand-offset-invalid");
+            finishClimb(&access,"hand-offset-invalid");
             clearTargets();
             return;
         }
@@ -701,11 +668,12 @@ namespace rock_wall_climbing
             policy::Vec3{};
 
         if (currentHeldCount == 0) {
-            finishClimb(
-                &access,
-                snapshot.gameToHavokScale,
-                true,
-                "final-release");
+            if (_climbing) {
+                releaseToAir(snapshot, access);
+            } else {
+                // Only a deferred gravity restore is left to finish.
+                finishClimb(&access, "gravity-restore");
+            }
             return;
         }
 
@@ -719,7 +687,7 @@ namespace rock_wall_climbing
         if (!suspendGravity(access)) {
             logger::error(
                 "Could not suspend the verified player-controller gravity field; climbing failed closed.");
-            finishClimb(&access, 0.0f, false, "gravity-write");
+            finishClimb(&access,"gravity-write");
             clearTargets();
             return;
         }
@@ -806,7 +774,7 @@ namespace rock_wall_climbing
         if (!trySetVelocity(access, {})) {
             logger::error(
                 "Player velocity cancellation failed during climbing; failing closed.");
-            finishClimb(nullptr, 0.0f, false, "velocity-write");
+            finishClimb(nullptr,"velocity-write");
             clearTargets();
             return;
         }
@@ -814,7 +782,7 @@ namespace rock_wall_climbing
             !trySetPlayerPosition(access.player, clampedPosition)) {
             logger::error(
                 "Player SetPosition failed during climbing; failing closed.");
-            finishClimb(nullptr, 0.0f, false, "position-write");
+            finishClimb(nullptr,"position-write");
             clearTargets();
             return;
         }
@@ -890,6 +858,12 @@ namespace rock_wall_climbing
                 flag(rock::api::touch::TouchGrabTargetFlag::ExcludePowerArmor) |
                 flag(rock::api::touch::TouchGrabTargetFlag::MatchStaticMotion) |
                 flag(rock::api::touch::TouchGrabTargetFlag::MatchKeyframedMotion);
+            if (_config.catchWithHeldGrip) {
+                // A grip pressed just before the hand lands, or held through
+                // a flight, still takes the surface on contact.
+                target.flags |= flag(
+                    rock::api::touch::TouchGrabTargetFlag::AcquireWhileGripHeld);
+            }
             target.bodyId = INVALID_BODY_ID;
             target.allowedLayerMask =
                 policy::CLIMBABLE_WORLD_LAYER_MASK;
@@ -1193,70 +1167,335 @@ namespace rock_wall_climbing
         return validCoordinate(resolvedPlayerPosition);
     }
 
-    void ClimbingRuntime::observeLaunchReadback(
-        const std::uint64_t frameIndex,
-        const rock::api::Status result,
-        const rock::api::playercontroller::PlayerControllerState& state,
-        const bool stateValid) noexcept
+    bool ClimbingRuntime::castSurfaceRay(
+        const rock_wall_climbing::Frame& snapshot,
+        const policy::Vec3 start,
+        const policy::Vec3 direction,
+        const float distance,
+        bool& hit,
+        float& hitDistance) noexcept
     {
-        auto& observation = _launchObservation;
-        if (!observation.active ||
-            frameIndex <= observation.startFrameIndex) {
+        hit = false;
+        hitDistance = 0.0f;
+        if (!validCoordinate(start) || !policy::finite(direction) ||
+            !std::isfinite(distance) || distance <= 0.0f) {
+            return false;
+        }
+
+        rock::api::collision::WorldRaycastRequest request{};
+        request.startGame = providerPoint(start);
+        request.directionGame = providerPoint(direction);
+        request.maxDistanceGame = distance;
+        request.worldGeneration = snapshot.sample.worldGeneration;
+        request.skeletonGeneration = snapshot.sample.skeletonGeneration;
+        request.providerGeneration = snapshot.sample.providerGeneration;
+        // Solid world surfaces only: the player's own body, actors and held
+        // objects are never ground or a ceiling.
+        request.filter = rock::api::collision::WorldRaycastFilter::Surfaces;
+
+        rock::api::collision::WorldRaycastResult result{};
+        if (rockApiClient().queryWorldRaycast(request, result) !=
+            rock::api::Status::Ok) {
+            return false;
+        }
+        if (result.hit == 0) {
+            return true;
+        }
+        if (!std::isfinite(result.hitDistanceGame) ||
+            result.hitDistanceGame < 0.0f) {
+            return false;
+        }
+        hit = true;
+        hitDistance = result.hitDistanceGame;
+        return true;
+    }
+
+    bool ClimbingRuntime::findGroundUnderHead(
+        const rock_wall_climbing::Frame& snapshot,
+        const policy::Vec3 headPosition,
+        const float feetHeight,
+        float& groundHeight) noexcept
+    {
+        groundHeight = 0.0f;
+        const float headHeight = std::max(
+            headPosition.z - feetHeight,
+            MINIMUM_HEAD_HEIGHT);
+        bool hit = false;
+        float hitDistance = 0.0f;
+        if (!castSurfaceRay(
+                snapshot,
+                headPosition,
+                { 0.0f, 0.0f, -1.0f },
+                headHeight + GROUND_PROBE_BELOW_FEET,
+                hit,
+                hitDistance) ||
+            !hit) {
+            return false;
+        }
+        groundHeight = headPosition.z - hitDistance;
+        return true;
+    }
+
+    void ClimbingRuntime::releaseToAir(
+        const rock_wall_climbing::Frame& snapshot,
+        const PlayerAccess& access)
+    {
+        std::array<policy::VelocitySample, VelocityHistory::CAPACITY>
+            samples{};
+        const auto chronological =
+            _velocityHistory.copyChronological(samples);
+        const policy::Vec3 launch = policy::calculateLaunchVelocity(
+            chronological,
+            _config.launch);
+
+        logMotionTrace("release");
+        _climbing = false;
+        _targetPositionValid = false;
+        _targetPlayerPosition = {};
+        _hands = {};
+        _velocityHistory.clear();
+
+        if (!trySetVelocity(access, {})) {
+            logger::error(
+                "Player velocity cancellation failed on release; failing closed.");
+            finishClimb(nullptr, "velocity-write");
             return;
         }
 
-        ++observation.frames;
-        observation.lastResult = static_cast<std::uint32_t>(result);
-        const bool velocityValid = stateValid &&
-            hasControllerStateFlag(
-                state.flags,
-                rock::api::playercontroller::PlayerControllerStateFlag::VelocityValid);
-        if (velocityValid) {
-            const policy::Vec3 velocity = point(state.velocityGame);
-            if (policy::finite(velocity)) {
-                if (!observation.firstVelocityValid) {
-                    observation.firstVelocity = velocity;
-                    observation.firstVelocityValid = true;
-                }
-                observation.lastVelocity = velocity;
-                ++observation.validFrames;
-                observation.supportedFrames += hasControllerStateFlag(
-                    state.flags,
-                    rock::api::playercontroller::PlayerControllerStateFlag::Supported) ?
-                    1u : 0u;
-            }
+        const policy::Vec3 head = translation(snapshot.hmdTransform);
+        if (policy::lengthSquared(launch) > 1.0e-6f) {
+            _air = {};
+            _air.phase = AirPhase::Flight;
+            _air.velocity = launch;
+            _air.launchVelocity = launch;
+            _air.startPosition = access.playerPosition;
+            logger::info(
+                "Released into flight velocity=({:.1f},{:.1f},{:.1f}) speed={:.1f} samples={} gravity={:.0f}.",
+                launch.x,
+                launch.y,
+                launch.z,
+                policy::length(launch),
+                chronological.size(),
+                _config.launch.gravity);
+            return;
         }
 
-        if (observation.frames >= LAUNCH_OBSERVATION_FRAMES) {
-            finishLaunchObservation("window-complete");
+        float groundHeight = 0.0f;
+        const bool groundFound = findGroundUnderHead(
+            snapshot,
+            head,
+            access.playerPosition.z,
+            groundHeight);
+        if (policy::decideLanding(
+                groundFound,
+                groundHeight,
+                access.playerPosition.z,
+                0.0f) == policy::LandingDecision::Mantle &&
+            tryBeginMantle(
+                snapshot,
+                access.playerPosition,
+                head,
+                groundHeight)) {
+            return;
+        }
+        finishClimb(&access, "final-release");
+    }
+
+    bool ClimbingRuntime::tryBeginMantle(
+        const rock_wall_climbing::Frame& snapshot,
+        const policy::Vec3 playerPosition,
+        const policy::Vec3 headPosition,
+        const float groundHeight)
+    {
+        float rise = groundHeight - playerPosition.z;
+        if (!std::isfinite(rise) || rise < policy::MANTLE_MINIMUM_RISE) {
+            return false;
+        }
+
+        // The head rises as far as the feet do; lift only through free room.
+        bool ceilingHit = false;
+        float ceilingDistance = 0.0f;
+        if (!castSurfaceRay(
+                snapshot,
+                headPosition,
+                { 0.0f, 0.0f, 1.0f },
+                rise + _config.headClearanceGameUnits,
+                ceilingHit,
+                ceilingDistance)) {
+            return false;
+        }
+        if (ceilingHit) {
+            rise = std::min(
+                rise,
+                ceilingDistance - _config.headClearanceGameUnits);
+        }
+        if (rise < policy::MANTLE_MINIMUM_RISE) {
+            logger::info(
+                "Mantle skipped: no head room above (ceiling {:.1f} game units over the head).",
+                ceilingDistance);
+            return false;
+        }
+
+        policy::Vec3 target = playerPosition;
+        target.z += rise;
+        const policy::Vec3 launchVelocity = _air.launchVelocity;
+        const policy::Vec3 startPosition = _air.phase == AirPhase::Flight ?
+            _air.startPosition :
+            playerPosition;
+        const float seconds = _air.seconds;
+        _air = {};
+        _air.phase = AirPhase::Mantle;
+        _air.mantle = policy::makeMantlePath(playerPosition, target);
+        _air.launchVelocity = launchVelocity;
+        _air.startPosition = startPosition;
+        _air.seconds = seconds;
+        logger::info(
+            "Mantle started rise={:.1f} seconds={:.2f} ceiling={}.",
+            rise,
+            _air.mantle.durationSeconds,
+            ceilingHit ? "limited" : "clear");
+        return true;
+    }
+
+    void ClimbingRuntime::updateAir(
+        const rock_wall_climbing::Frame& snapshot,
+        const PlayerAccess& access)
+    {
+        _air.seconds += snapshot.deltaSeconds;
+        ++_air.frames;
+
+        if (!suspendGravity(access)) {
+            logger::error(
+                "Could not keep the player gravity suspended in the air; failing closed.");
+            finishClimb(&access, "gravity-write");
+            return;
+        }
+        if (!trySetVelocity(access, {})) {
+            logger::error(
+                "Player velocity cancellation failed in the air; failing closed.");
+            finishClimb(nullptr, "velocity-write");
+            return;
+        }
+
+        if (_air.phase == AirPhase::Mantle) {
+            _air.mantleProgress +=
+                snapshot.deltaSeconds / _air.mantle.durationSeconds;
+            const bool complete = _air.mantleProgress >= 1.0f;
+            const policy::Vec3 position = complete ?
+                _air.mantle.target :
+                policy::evaluateMantlePath(_air.mantle, _air.mantleProgress);
+            if (!trySetPlayerPosition(access.player, position)) {
+                logger::error(
+                    "Player SetPosition failed during the mantle; failing closed.");
+                finishClimb(nullptr, "position-write");
+                return;
+            }
+            if (complete) {
+                finishClimb(&access, "mantle-complete");
+            }
+            return;
+        }
+
+        if (_air.seconds > MAXIMUM_FLIGHT_SECONDS) {
+            logger::warn(
+                "Flight exceeded {:.0f} s without landing; returning the player to the game's own fall.",
+                MAXIMUM_FLIGHT_SECONDS);
+            finishClimb(&access, "flight-timeout");
+            return;
+        }
+
+        const auto step = policy::integrateFlight(
+            _air.velocity,
+            _config.launch.gravity,
+            snapshot.deltaSeconds);
+        const policy::Vec3 desiredPosition = policy::add(
+            access.playerPosition,
+            step.displacement);
+        policy::Vec3 position{};
+        bool constrained = false;
+        std::uint32_t slidePasses = 0;
+        if (!tryResolveHeadMotion(
+                snapshot,
+                access.playerPosition,
+                desiredPosition,
+                position,
+                constrained,
+                slidePasses)) {
+            logger::warn(
+                "ROCK head-motion raycast failed in flight; returning the player to the game's own fall.");
+            finishClimb(&access, "flight-raycast");
+            return;
+        }
+
+        const policy::Vec3 appliedStep = policy::subtract(
+            position,
+            access.playerPosition);
+        // What a wall or ceiling stopped is gone; what slid along it stays.
+        policy::Vec3 velocity = step.velocity;
+        if (constrained) {
+            velocity = policy::divide(appliedStep, snapshot.deltaSeconds);
+            ++_air.constrainedFrames;
+        }
+
+        const policy::Vec3 head = policy::add(
+            translation(snapshot.hmdTransform),
+            appliedStep);
+        float groundHeight = 0.0f;
+        const bool groundFound = findGroundUnderHead(
+            snapshot,
+            head,
+            position.z,
+            groundHeight);
+        const auto landing = policy::decideLanding(
+            groundFound,
+            groundHeight,
+            position.z,
+            velocity.z);
+        if (landing == policy::LandingDecision::Land) {
+            position.z = std::max(position.z, groundHeight);
+        }
+
+        if (policy::lengthSquared(policy::subtract(
+                position,
+                access.playerPosition)) > 1.0e-6f &&
+            !trySetPlayerPosition(access.player, position)) {
+            logger::error(
+                "Player SetPosition failed in flight; failing closed.");
+            finishClimb(nullptr, "position-write");
+            return;
+        }
+        _air.velocity = velocity;
+
+        if (landing == policy::LandingDecision::Land) {
+            finishClimb(&access, "landed");
+        } else if (landing == policy::LandingDecision::Mantle &&
+                   !tryBeginMantle(snapshot, position, head, groundHeight)) {
+            finishClimb(&access, "landed-without-room");
         }
     }
 
-    void ClimbingRuntime::finishLaunchObservation(
-        const char* reason) noexcept
+    void ClimbingRuntime::endAir(const char* reason)
     {
-        const auto observation = _launchObservation;
-        if (!observation.active) {
+        if (_air.phase == AirPhase::None) {
             return;
         }
         logger::info(
-            "Launch readback reason={} frames={} valid={} supported={} nativeJump={} requested=({:.1f},{:.1f},{:.1f}) first=({:.1f},{:.1f},{:.1f}) last=({:.1f},{:.1f},{:.1f}) result={}.",
+            "{} ended reason={} seconds={:.2f} frames={} constrainedFrames={} launch=({:.1f},{:.1f},{:.1f}) start=({:.1f},{:.1f},{:.1f}) velocity=({:.1f},{:.1f},{:.1f}).",
+            _air.phase == AirPhase::Flight ? "Flight" : "Mantle",
             reason ? reason : "unknown",
-            observation.frames,
-            observation.validFrames,
-            observation.supportedFrames,
-            observation.nativeJumpRequested ? "accepted" : "not-accepted",
-            observation.requestedVelocity.x,
-            observation.requestedVelocity.y,
-            observation.requestedVelocity.z,
-            observation.firstVelocity.x,
-            observation.firstVelocity.y,
-            observation.firstVelocity.z,
-            observation.lastVelocity.x,
-            observation.lastVelocity.y,
-            observation.lastVelocity.z,
-            observation.lastResult);
-        _launchObservation = {};
+            _air.seconds,
+            _air.frames,
+            _air.constrainedFrames,
+            _air.launchVelocity.x,
+            _air.launchVelocity.y,
+            _air.launchVelocity.z,
+            _air.startPosition.x,
+            _air.startPosition.y,
+            _air.startPosition.z,
+            _air.velocity.x,
+            _air.velocity.y,
+            _air.velocity.z);
+        _air = {};
     }
 
     bool ClimbingRuntime::tryResolveControllerAccess(
@@ -1700,8 +1939,6 @@ namespace rock_wall_climbing
 
     void ClimbingRuntime::finishClimb(
         const PlayerAccess* currentAccess,
-        const float gameToHavokScale,
-        const bool allowLaunch,
         const char* reason) noexcept
     {
         if (!_climbing && !_gravityOwned) {
@@ -1709,121 +1946,20 @@ namespace rock_wall_climbing
             return;
         }
 
-        std::array<policy::VelocitySample, VelocityHistory::CAPACITY>
-            samples{};
-        const auto chronological =
-            _velocityHistory.copyChronological(samples);
-        const policy::Vec3 launchImpulseGame =
-            allowLaunch && currentAccess &&
-                    std::isfinite(gameToHavokScale) &&
-                    gameToHavokScale > 0.0f ?
-                policy::calculateLaunchVelocity(
-                    chronological,
-                    _config.launch) :
-                policy::Vec3{};
-
-        rock::api::playercontroller::PlayerControllerState controllerState{};
-        rock::api::Status controllerStateResult =
-            rock::api::Status::NotReady;
-        bool controllerStateValid = false;
-        policy::Vec3 currentVelocityGame{};
-        if (policy::lengthSquared(launchImpulseGame) > 1.0e-6f &&
-            currentAccess) {
-            controllerStateResult = rockApiClient().queryPlayerControllerState(controllerState);
-            controllerStateValid =
-                controllerStateResult == rock::api::Status::Ok &&
-                hasControllerStateFlag(
-                    controllerState.flags,
-                    rock::api::playercontroller::PlayerControllerStateFlag::Valid) &&
-                hasControllerStateFlag(
-                    controllerState.flags,
-                    rock::api::playercontroller::PlayerControllerStateFlag::VelocityValid) &&
-                controllerState.sample.worldGeneration == _worldGeneration &&
-                controllerState.sample.skeletonGeneration == _skeletonGeneration &&
-                controllerState.sample.providerGeneration == _providerGeneration;
-            if (controllerStateValid) {
-                currentVelocityGame = point(controllerState.velocityGame);
-                controllerStateValid = policy::finite(currentVelocityGame);
-            }
-        }
-
-        const policy::Vec3 launchVelocityGame =
-            policy::lengthSquared(launchImpulseGame) > 1.0e-6f ?
-                policy::addLaunchImpulse(
-                    controllerStateValid ? currentVelocityGame : policy::Vec3{},
-                    launchImpulseGame,
-                    _config.launch.maximumSpeed) :
-                policy::Vec3{};
-        const float nativeJumpHeight = policy::nativeJumpHeightForVelocity(
-            launchVelocityGame.z,
-            std::abs(_savedGravity));
-        bool nativeJumpRequested = false;
-        rock::api::Status nativeJumpResult = rock::api::Status::NotReady;
-        if (controllerStateValid && nativeJumpHeight > 0.0f) {
-            rock::api::playercontroller::PlayerControllerJumpRequest request{};
-            request.heightGameUnits = nativeJumpHeight;
-            request.worldGeneration = _worldGeneration;
-            request.skeletonGeneration = _skeletonGeneration;
-            request.providerGeneration = _providerGeneration;
-            nativeJumpResult =
-                rockApiClient().requestPlayerControllerJump(request);
-            nativeJumpRequested = nativeJumpResult == rock::api::Status::Ok;
-            if (!nativeJumpRequested) {
-                logger::warn(
-                    "ROCK rejected release-driven native jump admission: result={} height={:.1f}; applying the verified launch velocity without state assistance.",
-                    static_cast<std::uint32_t>(nativeJumpResult),
-                    nativeJumpHeight);
-            }
-        }
-
         restoreGravity(currentAccess);
-
-        bool launchApplied = false;
         if (currentAccess) {
-            if (policy::lengthSquared(launchVelocityGame) > 1.0e-6f) {
-                const policy::Vec3 launchHavok = policy::scale(
-                    launchVelocityGame,
-                    gameToHavokScale);
-                launchApplied = trySetVelocity(
-                    *currentAccess,
-                    launchHavok);
-                if (!launchApplied) {
-                    logger::warn(
-                        "Could not apply final launch velocity; normal gravity resumed.");
-                }
-            } else {
-                static_cast<void>(
-                    trySetVelocity(*currentAccess, {}));
+            static_cast<void>(trySetVelocity(*currentAccess, {}));
+        }
+
+        try {
+            if (_climbing) {
+                logMotionTrace(reason);
             }
-        }
-
-        if (launchApplied) {
-            finishLaunchObservation("superseded");
-            _launchObservation.active = true;
-            _launchObservation.nativeJumpRequested = nativeJumpRequested;
-            _launchObservation.startFrameIndex = _lastFrameIndex;
-            _launchObservation.lastResult =
-                static_cast<std::uint32_t>(controllerStateResult);
-            _launchObservation.requestedVelocity = launchVelocityGame;
-        }
-
-        if (_climbing) {
-            logMotionTrace(reason);
+            endAir(reason);
             logger::info(
-                "Climb ended reason={} launch={} impulseGame=({:.1f},{:.1f},{:.1f}) velocityGame=({:.1f},{:.1f},{:.1f}) speed={:.1f} nativeJump={} height={:.1f} requestResult={} samples={}.",
-                reason ? reason : "unknown",
-                launchApplied ? "applied" : "none",
-                launchImpulseGame.x,
-                launchImpulseGame.y,
-                launchImpulseGame.z,
-                launchVelocityGame.x,
-                launchVelocityGame.y,
-                launchVelocityGame.z,
-                policy::length(launchVelocityGame),
-                nativeJumpRequested ? "accepted" : "not-accepted",
-                nativeJumpHeight,
-                static_cast<std::uint32_t>(nativeJumpResult),
-                chronological.size());
+                "Climb ended reason={}.",
+                reason ? reason : "unknown");
+        } catch (...) {
         }
         resetLocalState();
     }
@@ -1870,6 +2006,7 @@ namespace rock_wall_climbing
     void ClimbingRuntime::resetLocalState() noexcept
     {
         _climbing = false;
+        _air = {};
         _targetPositionValid = false;
         _targetPlayerPosition = {};
         _hands = {};

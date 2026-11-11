@@ -35,6 +35,7 @@ namespace rock_wall_climbing
         constexpr Range kHorizontalBoost{ 0.0f, 3.0f };
         constexpr Range kMinimumSpeed{ 0.0f, 500.0f };
         constexpr Range kMaximumSpeed{ 1.0f, 1200.0f };
+        constexpr Range kGravity{ 100.0f, 3000.0f };
 
         std::string text(bool value) { return value ? "true" : "false"; }
         std::string text(int value) { return std::to_string(value); }
@@ -79,7 +80,12 @@ namespace rock_wall_climbing
         {
             std::string_view oldKey, table, key;
             std::string_view oldSection{};
+            // The INI default when it is no longer the option's default.
+            std::string_view oldDefault{};
         };
+        // Launch Strength and TopSpeedGameUnitsPerSecond replace Multiplier and
+        // MaximumSpeedGameUnitsPerSecond: files written with those keys hold
+        // the earlier, weaker defaults as explicit values, which would stay.
         // The INI keys of earlier versions. Their defaults then were the
         // compiled defaults now, so only changed values carry over. The INI
         // used bEnabled in two sections, so those rows name theirs.
@@ -95,10 +101,10 @@ namespace rock_wall_climbing
             Old{ "bFollowMovingSurfaces", "Climbing", "FollowMovingSurfaces" },
             Old{ "fVelocityHistorySeconds", "Launch", "VelocityHistorySeconds" },
             Old{ "fDirectionFilterDegrees", "Launch", "DirectionFilterDegrees" },
-            Old{ "fMultiplier", "Launch", "Multiplier" },
+            Old{ "fMultiplier", "Launch", "Strength", {}, "1.15" },
             Old{ "fHorizontalBoost", "Launch", "HorizontalBoost" },
             Old{ "fMinimumSpeedGameUnitsPerSecond", "Launch", "MinimumSpeedGameUnitsPerSecond" },
-            Old{ "fMaximumSpeedGameUnitsPerSecond", "Launch", "MaximumSpeedGameUnitsPerSecond" },
+            Old{ "fMaximumSpeedGameUnitsPerSecond", "Launch", "TopSpeedGameUnitsPerSecond", {}, "450.0" },
             Old{ "bDetailedTelemetry", "Diagnostics", "DetailedTelemetry" },
         };
     }
@@ -134,6 +140,10 @@ namespace rock_wall_climbing
                 ValueType::Float, text(d.headClearanceGameUnits) },
             { "Climbing", "FollowMovingSurfaces", climbing, "Carry the player with a grabbed moving (keyframed) surface.",
                 player, ValueType::Boolean, text(d.followMovingSurfaces) },
+            { "Climbing", "CatchWithHeldGrip", climbing,
+                "A hand whose grip is already held grabs a surface the moment it touches it, also in the air. Off: only a "
+                "grip press grabs.",
+                player, ValueType::Boolean, text(d.catchWithHeldGrip) },
             { "Launch", "Enabled", launch, "Letting go while pulling launches you along the pull.", player,
                 ValueType::Boolean, text(d.launch.enabled) },
             { "Launch", "VelocityHistorySeconds", launch,
@@ -142,15 +152,18 @@ namespace rock_wall_climbing
             { "Launch", "DirectionFilterDegrees", launch,
                 withRange("Hand motion further than this many degrees from the launch direction is ignored.", kDirectionFilter),
                 player, ValueType::Float, text(d.launch.directionFilterDegrees) },
-            { "Launch", "Multiplier", launch, withRange("Scales the launch speed.", kMultiplier), player, ValueType::Float,
+            { "Launch", "Strength", launch, withRange("Scales the launch speed.", kMultiplier), player, ValueType::Float,
                 text(d.launch.multiplier) },
             { "Launch", "HorizontalBoost", launch, withRange("Scales the horizontal part of the launch.", kHorizontalBoost),
                 player, ValueType::Float, text(d.launch.horizontalBoost) },
             { "Launch", "MinimumSpeedGameUnitsPerSecond", launch,
-                withRange("Slower releases do not launch; never more than MaximumSpeedGameUnitsPerSecond.", kMinimumSpeed),
+                withRange("Slower releases do not launch; never more than TopSpeedGameUnitsPerSecond.", kMinimumSpeed),
                 player, ValueType::Float, text(d.launch.minimumSpeed) },
-            { "Launch", "MaximumSpeedGameUnitsPerSecond", launch, withRange("Fastest launch.", kMaximumSpeed), player,
+            { "Launch", "TopSpeedGameUnitsPerSecond", launch, withRange("Fastest launch.", kMaximumSpeed), player,
                 ValueType::Float, text(d.launch.maximumSpeed) },
+            { "Launch", "GravityGameUnitsPerSecondSquared", launch,
+                withRange("How fast a launch falls back down. Lower flies further.", kGravity), player, ValueType::Float,
+                text(d.launch.gravity) },
             { "Diagnostics", "DetailedTelemetry", diagnostics,
                 "Logs bounded, sampled movement telemetry. Off for normal play.", player, ValueType::Boolean,
                 text(d.detailedTelemetry) },
@@ -176,7 +189,7 @@ namespace rock_wall_climbing
                 key.oldKey = old.oldKey;
                 key.table = old.table;
                 key.key = old.key;
-                key.oldDefault = table.defaults.emplace_back(found->defaultValue);
+                key.oldDefault = table.defaults.emplace_back(old.oldDefault.empty() ? found->defaultValue : std::string(old.oldDefault));
                 key.oldSection = old.oldSection;
                 table.keys.push_back(key);
             }
@@ -216,16 +229,19 @@ namespace rock_wall_climbing
         config.headClearanceGameUnits =
             number(store, "Climbing", "HeadClearanceGameUnits", d.headClearanceGameUnits, kHeadClearance);
         config.followMovingSurfaces = valueOf(store, "Climbing", "FollowMovingSurfaces") == "true";
+        config.catchWithHeldGrip = valueOf(store, "Climbing", "CatchWithHeldGrip") == "true";
         config.launch.enabled = valueOf(store, "Launch", "Enabled") == "true";
         config.launch.historySeconds = number(store, "Launch", "VelocityHistorySeconds", d.launch.historySeconds, kHistory);
         config.launch.directionFilterDegrees =
             number(store, "Launch", "DirectionFilterDegrees", d.launch.directionFilterDegrees, kDirectionFilter);
-        config.launch.multiplier = number(store, "Launch", "Multiplier", d.launch.multiplier, kMultiplier);
+        config.launch.multiplier = number(store, "Launch", "Strength", d.launch.multiplier, kMultiplier);
         config.launch.horizontalBoost = number(store, "Launch", "HorizontalBoost", d.launch.horizontalBoost, kHorizontalBoost);
         config.launch.minimumSpeed =
             number(store, "Launch", "MinimumSpeedGameUnitsPerSecond", d.launch.minimumSpeed, kMinimumSpeed);
         config.launch.maximumSpeed =
-            number(store, "Launch", "MaximumSpeedGameUnitsPerSecond", d.launch.maximumSpeed, kMaximumSpeed);
+            number(store, "Launch", "TopSpeedGameUnitsPerSecond", d.launch.maximumSpeed, kMaximumSpeed);
+        config.launch.gravity =
+            number(store, "Launch", "GravityGameUnitsPerSecondSquared", d.launch.gravity, kGravity);
         config.launch.minimumSpeed = (std::min)(config.launch.minimumSpeed, config.launch.maximumSpeed);
         config.detailedTelemetry = valueOf(store, "Diagnostics", "DetailedTelemetry") == "true";
         return config;

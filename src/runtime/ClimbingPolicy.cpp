@@ -397,32 +397,71 @@ namespace rock_wall_climbing::policy
         return length(velocity) >= settings.minimumSpeed ? velocity : Vec3{};
     }
 
-    Vec3 addLaunchImpulse(
-        const Vec3 currentVelocity,
-        const Vec3 launchImpulse,
-        const float maximumSpeed) noexcept
+    FlightStep integrateFlight(
+        const Vec3 velocity,
+        const float gravity,
+        const float deltaSeconds) noexcept
     {
-        if (!finite(currentVelocity) || !finite(launchImpulse) ||
-            !std::isfinite(maximumSpeed) || maximumSpeed <= 0.0f) {
+        if (!finite(velocity) || !std::isfinite(gravity) || gravity < 0.0f ||
+            !std::isfinite(deltaSeconds) || deltaSeconds <= 0.0f) {
             return {};
         }
-        return clampMagnitude(add(currentVelocity, launchImpulse), maximumSpeed);
+        FlightStep step{};
+        step.velocity = velocity;
+        step.velocity.z -= gravity * deltaSeconds;
+        step.displacement = scale(step.velocity, deltaSeconds);
+        return step;
     }
 
-    float nativeJumpHeightForVelocity(
-        const float upwardVelocity,
-        const float gravityScalar) noexcept
+    LandingDecision decideLanding(
+        const bool groundFound,
+        const float groundHeight,
+        const float feetHeight,
+        const float verticalVelocity) noexcept
     {
-        if (!std::isfinite(upwardVelocity) || upwardVelocity <= 0.0f ||
-            !std::isfinite(gravityScalar) || gravityScalar <= 0.0f) {
-            return 0.0f;
+        if (!groundFound || !std::isfinite(groundHeight) ||
+            !std::isfinite(feetHeight) || !std::isfinite(verticalVelocity)) {
+            return LandingDecision::Continue;
         }
-        const float acceleration =
-            gravityScalar * CHARACTER_GRAVITY_ACCELERATION_SCALE;
-        const float height =
-            upwardVelocity * upwardVelocity / (2.0f * acceleration);
-        return std::isfinite(height) ?
-            std::clamp(height, 0.0f, MAXIMUM_NATIVE_JUMP_HEIGHT_GAME) :
-            0.0f;
+        const float penetration = groundHeight - feetHeight;
+        if (penetration < 0.0f) {
+            return LandingDecision::Continue;
+        }
+        if (verticalVelocity > 0.0f &&
+            penetration <= FLIGHT_MAXIMUM_RISING_PENETRATION) {
+            return LandingDecision::Continue;
+        }
+        return penetration >= MANTLE_MINIMUM_RISE ?
+            LandingDecision::Mantle :
+            LandingDecision::Land;
+    }
+
+    MantlePath makeMantlePath(
+        const Vec3 start,
+        const Vec3 target) noexcept
+    {
+        MantlePath path{};
+        if (!finite(start) || !finite(target)) {
+            return path;
+        }
+        path.start = start;
+        path.target = target;
+        path.durationSeconds = std::max(
+            MANTLE_MINIMUM_SECONDS,
+            length(subtract(target, start)) * MANTLE_SECONDS_PER_GAME_UNIT);
+        return path;
+    }
+
+    Vec3 evaluateMantlePath(
+        const MantlePath& path,
+        const float progress) noexcept
+    {
+        const float bounded = std::isfinite(progress) ?
+            std::clamp(progress, 0.0f, 1.0f) :
+            1.0f;
+        const float eased = 1.0f - (1.0f - bounded) * (1.0f - bounded);
+        return add(
+            path.start,
+            scale(subtract(path.target, path.start), eased));
     }
 }

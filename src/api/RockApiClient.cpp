@@ -60,8 +60,7 @@ namespace rock_wall_climbing
             (status=_client.acquire(bits(api::hands::Permission::Read),_hands))!=api::Status::Ok ||
             (status=_client.acquire(bits(api::grab::Permission::Read),_grab))!=api::Status::Ok ||
             (status=_client.acquire(bits(api::touch::Permission::Read,api::touch::Permission::Write),_touch))!=api::Status::Ok ||
-            (status=_client.acquire(bits(api::collision::Permission::Read),_collision))!=api::Status::Ok ||
-            (status=_client.acquire(bits(api::playercontroller::Permission::Read,api::playercontroller::Permission::Write),_controller))!=api::Status::Ok) {
+            (status=_client.acquire(bits(api::collision::Permission::Read),_collision))!=api::Status::Ok) {
             logger::error("ROCK is missing a required modular climbing interface: status {}",static_cast<std::uint32_t>(status));
             if (isVersionRefusal(status)) reportRockMismatch("an interface refused");
             shutdown(); return false;
@@ -75,9 +74,9 @@ namespace rock_wall_climbing
             logger::error("ROCK climbing owner teardown failed: {}",static_cast<std::uint32_t>(status)); return;
         }
         _ownerToken=0; _frameCallbackToken=0; _callback=nullptr; _callbackData=nullptr;
-        _core=nullptr; _hands=nullptr; _grab=nullptr; _touch=nullptr; _collision=nullptr; _controller=nullptr;
+        _core=nullptr; _hands=nullptr; _grab=nullptr; _touch=nullptr; _collision=nullptr;
     }
-    bool RockApiClient::ready() const noexcept { return _client.owner() && _ownerToken && _core && _touch && _collision && _controller && _hands && _grab; }
+    bool RockApiClient::ready() const noexcept { return _client.owner() && _ownerToken && _core && _touch && _collision && _hands && _grab; }
     std::uint64_t RockApiClient::ownerToken() const noexcept { return _ownerToken; }
     bool RockApiClient::registerFrameCallback(FrameCallback callback,void* userData) noexcept {
         if (!ready() || !callback) return false;
@@ -186,32 +185,4 @@ namespace rock_wall_climbing
             &request,
             &result);
     }
-
-    rock::api::Status
-        RockApiClient::queryPlayerControllerState(
-            rock::api::playercontroller::PlayerControllerState& state)
-            const noexcept
-    {
-        state = {};
-        if (!ready()) {
-            return rock::api::Status::NotReady;
-        }
-        return _controller->getPlayerControllerState(
-            _ownerToken,
-            &state);
-    }
-
-    rock::api::Status
-        RockApiClient::requestPlayerControllerJump(
-            const rock::api::playercontroller::PlayerControllerJumpRequest& request)
-            const noexcept
-    {
-        if (!ready()) {
-            return rock::api::Status::NotReady;
-        }
-        return _controller->requestPlayerControllerJump(
-            _ownerToken,
-            &request);
-    }
-
 }

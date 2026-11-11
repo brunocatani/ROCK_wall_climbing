@@ -45,16 +45,6 @@ namespace rock_wall_climbing
             rock::api::collision::WorldRaycastResult& result)
             const noexcept;
 
-        [[nodiscard]] rock::api::Status
-            queryPlayerControllerState(
-                rock::api::playercontroller::PlayerControllerState& state)
-                const noexcept;
-
-        [[nodiscard]] rock::api::Status
-            requestPlayerControllerJump(
-                const rock::api::playercontroller::PlayerControllerJumpRequest& request)
-                const noexcept;
-
     private:
         rock::api::Client _client;
         const rock::api::core::Api* _core{};
@@ -62,7 +52,6 @@ namespace rock_wall_climbing
         const rock::api::grab::Api* _grab{};
         const rock::api::touch::Api* _touch{};
         const rock::api::collision::Api* _collision{};
-        const rock::api::playercontroller::Api* _controller{};
         FrameCallback _callback{};
         void* _callbackData{};
         static void ROCK_CALL receiveFrame(const rock::api::core::Snapshot*,void*);

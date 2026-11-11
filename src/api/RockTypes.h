@@ -4,7 +4,6 @@
 #include <ROCK/Grab.h>
 #include <ROCK/Touch.h>
 #include <ROCK/Collision.h>
-#include <ROCK/PlayerController.h>
 
 namespace rock_wall_climbing {
     enum class FrameFlag : std::uint32_t { DeltaSecondsValid=1, HmdTransformValid=2, RightHandTransformValid=128, LeftHandTransformValid=256 };

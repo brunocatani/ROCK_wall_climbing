@@ -25,6 +25,7 @@ namespace rock_wall_climbing
         float maximumTargetSeparationGameUnits{ 96.0f };
         float headClearanceGameUnits{ 12.0f };
         bool followMovingSurfaces{ true };
+        bool catchWithHeldGrip{ true };
 
         policy::LaunchSettings launch{};
         bool detailedTelemetry{ false };

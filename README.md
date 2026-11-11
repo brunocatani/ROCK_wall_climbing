@@ -6,7 +6,9 @@ A Fallout 4 VR addon for ROCK that lets you grab walls and pull yourself through
 
 - Climb with either hand or both, holding the same surface or separate surfaces.
 - Move hand over hand and use your climbing momentum to launch yourself when you let go.
-- Your final controller flick launches you automatically when the last hand lets go; there is no separate climbing jump button.
+- Your final controller flick launches you automatically when the last hand lets go; there is no separate climbing jump button. The launch is a real flight: it carries you up, across gaps and along walls until you land.
+- Catch a wall in the air: a hand whose grip is held grabs the surface the moment it touches it.
+- Vault ledges: when you let go or land with your head above a ledge and your feet below it, you are lifted onto it.
 - Follow supported moving surfaces while holding on.
 
 Climbing yields to other supported grab interactions. Power armor frames and actors in power armor are excluded as climbing surfaces.
@@ -22,7 +24,7 @@ The installable `.zip` is available under [GitHub Releases](https://github.com/b
 
 ## How to climb
 
-Touch a surface, hold the grab button, and move your hand opposite the direction you want to travel. Release to let go. Surfaces need usable collision to be grabbed.
+Hold the grab button and touch a surface, in either order, then move your hand opposite the direction you want to travel. Release to let go; release while pulling to launch. Keep a grip held while you fly to catch the next wall. Surfaces need usable collision to be grabbed.
 
 ## Settings
 
@@ -67,4 +69,4 @@ Built with the assistance of AI.
 
 ## Provider boundary
 
-Climbing negotiates Core callbacks, Hands and Grab Read, Touch Read/Write, Collision Read and PlayerController Read/Write. Scoped surface targets and native jump requests have separate ownership/lifecycle rules. Capsule-clearance work belongs to the addon; it is not a public PlayerController penetration API.
+Climbing negotiates Core callbacks, Hands and Grab Read, Touch Read/Write and Collision Read. ROCK owns latching a hand onto a surface; the addon owns moving the player: the climb, the flight after a launch, landing and the lift onto a ledge, using ROCK's world raycasts. Capsule-clearance work belongs to the addon.

@@ -257,30 +257,6 @@ namespace
         assert(close(length(calculateLaunchVelocity(samples, settings)), 0.0f));
     }
 
-    void launchImpulseIsAdditiveAndNativeHeightMatchesVelocity()
-    {
-        const Vec3 combined = addLaunchImpulse(
-            { 10.0f, -20.0f, -30.0f },
-            { 100.0f, 20.0f, 200.0f },
-            450.0f);
-        assert(close(combined.x, 110.0f));
-        assert(close(combined.y, 0.0f));
-        assert(close(combined.z, 170.0f));
-
-        const Vec3 capped = addLaunchImpulse(
-            {},
-            { 800.0f, 0.0f, 600.0f },
-            450.0f);
-        assert(close(length(capped), 450.0f));
-
-        assert(close(nativeJumpHeightForVelocity(350.0f, 1.0f), 87.5f));
-        assert(close(nativeJumpHeightForVelocity(-1.0f, 1.0f), 0.0f));
-        assert(close(nativeJumpHeightForVelocity(350.0f, 0.0f), 0.0f));
-        assert(close(
-            nativeJumpHeightForVelocity(1000.0f, 1.0f),
-            MAXIMUM_NATIVE_JUMP_HEIGHT_GAME));
-    }
-
     void velocityHistoryIsBoundedAndChronological()
     {
         VelocityHistory history;
@@ -378,7 +354,6 @@ int main()
     adaptiveSmoothingIsBoundedAndMonotonic();
     launchRejectsOpposedNoiseAndCapsSpeed();
     slowReleaseDoesNotLaunch();
-    launchImpulseIsAdditiveAndNativeHeightMatchesVelocity();
     velocityHistoryIsBoundedAndChronological();
     zeroHandoffSamplesAgeOutOldLaunchMomentum();
     controllerVelocityDispatchRejectsTheTransformSlot();

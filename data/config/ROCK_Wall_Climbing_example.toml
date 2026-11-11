@@ -30,6 +30,9 @@ HeadClearanceGameUnits = 12.0
 ## Carry the player with a grabbed moving (keyframed) surface.
 FollowMovingSurfaces = true
 
+## A hand whose grip is already held grabs a surface the moment it touches it, also in the air. Off: only a grip press grabs.
+CatchWithHeldGrip = true
+
 ## === 03. Launch ===
 [Launch]
 ## Letting go while pulling launches you along the pull.
@@ -42,16 +45,19 @@ VelocityHistorySeconds = 0.1
 DirectionFilterDegrees = 75.0
 
 ## Scales the launch speed. Range: 0 to 3.
-Multiplier = 1.15
+Strength = 1.25
 
 ## Scales the horizontal part of the launch. Range: 0 to 3.
 HorizontalBoost = 1.05
 
-## Slower releases do not launch; never more than MaximumSpeedGameUnitsPerSecond. Range: 0 to 500.
+## Slower releases do not launch; never more than TopSpeedGameUnitsPerSecond. Range: 0 to 500.
 MinimumSpeedGameUnitsPerSecond = 35.0
 
 ## Fastest launch. Range: 1 to 1200.
-MaximumSpeedGameUnitsPerSecond = 450.0
+TopSpeedGameUnitsPerSecond = 600.0
+
+## How fast a launch falls back down. Lower flies further. Range: 100 to 3000.
+GravityGameUnitsPerSecondSquared = 950.0
 
 ## === 04. Diagnostics ===
 [Diagnostics]

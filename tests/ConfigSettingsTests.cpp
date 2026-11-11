@@ -51,6 +51,7 @@ namespace
                a.launch.directionFilterDegrees == b.launch.directionFilterDegrees &&
                a.launch.multiplier == b.launch.multiplier && a.launch.horizontalBoost == b.launch.horizontalBoost &&
                a.launch.minimumSpeed == b.launch.minimumSpeed && a.launch.maximumSpeed == b.launch.maximumSpeed &&
+               a.launch.gravity == b.launch.gravity && a.catchWithHeldGrip == b.catchWithHeldGrip &&
                a.detailedTelemetry == b.detailedTelemetry;
     }
 }
@@ -82,7 +83,7 @@ int main(int argc, char** argv)
     // Clamped as documented; the launch minimum never exceeds its maximum.
     write(fresh / "ROCK_Wall_Climbing.toml",
         "[General]\nLogLevel = 9\n[Climbing]\nMovementScale = 5.0\n[Launch]\nMinimumSpeedGameUnitsPerSecond = 400.0\n"
-        "MaximumSpeedGameUnitsPerSecond = 100.0\n");
+        "TopSpeedGameUnitsPerSecond = 100.0\n");
     store->load(false);
     auto loaded = Config::fromStore(*store);
     assert(loaded.logLevel == 4 && loaded.movementScale == 2.0f);

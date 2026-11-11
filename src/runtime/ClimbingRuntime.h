@@ -140,19 +140,29 @@ namespace rock_wall_climbing
             };
         };
 
-        struct LaunchObservation
+        enum class AirPhase : std::uint8_t
         {
-            bool active{ false };
-            bool firstVelocityValid{ false };
-            bool nativeJumpRequested{ false };
-            std::uint64_t startFrameIndex{ 0 };
+            None,
+            // Flying a launch: the addon integrates the velocity.
+            Flight,
+            // Being lifted onto the surface under the head.
+            Mantle,
+        };
+
+        // After the last hand lets go the addon still owns the suspended
+        // gravity and steps the player itself until the flight lands, a hand
+        // catches a surface, or the lift onto a ledge completes.
+        struct AirState
+        {
+            AirPhase phase{ AirPhase::None };
+            policy::Vec3 velocity{};
+            policy::MantlePath mantle{};
+            float mantleProgress{ 0.0f };
+            float seconds{ 0.0f };
             std::uint32_t frames{ 0 };
-            std::uint32_t validFrames{ 0 };
-            std::uint32_t supportedFrames{ 0 };
-            std::uint32_t lastResult{ 0 };
-            policy::Vec3 requestedVelocity{};
-            policy::Vec3 firstVelocity{};
-            policy::Vec3 lastVelocity{};
+            std::uint32_t constrainedFrames{ 0 };
+            policy::Vec3 launchVelocity{};
+            policy::Vec3 startPosition{};
         };
 
         ClimbingRuntime() = default;
@@ -183,12 +193,32 @@ namespace rock_wall_climbing
             policy::Vec3& resolvedPlayerPosition,
             bool& wasConstrained,
             std::uint32_t& slidePasses) noexcept;
-        void observeLaunchReadback(
-            std::uint64_t frameIndex,
-            rock::api::Status result,
-            const rock::api::playercontroller::PlayerControllerState& state,
-            bool stateValid) noexcept;
-        void finishLaunchObservation(const char* reason) noexcept;
+        // One ROCK surface ray; false when the query itself failed.
+        [[nodiscard]] bool castSurfaceRay(
+            const rock_wall_climbing::Frame& snapshot,
+            policy::Vec3 start,
+            policy::Vec3 direction,
+            float distance,
+            bool& hit,
+            float& hitDistance) noexcept;
+        // Height of the surface under the head, down to just below the feet.
+        [[nodiscard]] bool findGroundUnderHead(
+            const rock_wall_climbing::Frame& snapshot,
+            policy::Vec3 headPosition,
+            float feetHeight,
+            float& groundHeight) noexcept;
+        void releaseToAir(
+            const rock_wall_climbing::Frame& snapshot,
+            const PlayerAccess& access);
+        void updateAir(
+            const rock_wall_climbing::Frame& snapshot,
+            const PlayerAccess& access);
+        [[nodiscard]] bool tryBeginMantle(
+            const rock_wall_climbing::Frame& snapshot,
+            policy::Vec3 playerPosition,
+            policy::Vec3 headPosition,
+            float groundHeight);
+        void endAir(const char* reason);
 
         [[nodiscard]] static bool tryResolveControllerAccess(
             ControllerAccess& access,
@@ -214,10 +244,10 @@ namespace rock_wall_climbing
             const ControllerAccess& access) noexcept;
         void restoreGravity(const ControllerAccess* currentAccess) noexcept;
         void clearGravityOwnership() noexcept;
+        // Ends climbing and any flight or mantle: gravity returns to the game
+        // and the player's velocity is cleared.
         void finishClimb(
             const PlayerAccess* currentAccess,
-            float gameToHavokScale,
-            bool allowLaunch,
             const char* reason) noexcept;
         void resetLocalState() noexcept;
         void logMotionTrace(const char* reason);
@@ -236,7 +266,7 @@ namespace rock_wall_climbing
         std::array<HandState, 2> _hands{};
         VelocityHistory _velocityHistory{};
 
-        LaunchObservation _launchObservation{};
+        AirState _air{};
 
         bool _gravityOwned{ false };
         bool _gravityRestoreDeferredLogged{ false };

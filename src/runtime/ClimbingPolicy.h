@@ -128,27 +128,74 @@ namespace rock_wall_climbing::policy
         bool enabled{ true };
         float historySeconds{ 0.10f };
         float directionFilterDegrees{ 75.0f };
-        float multiplier{ 1.15f };
+        float multiplier{ 1.25f };
         float horizontalBoost{ 1.05f };
         float minimumSpeed{ 35.0f };
-        float maximumSpeed{ 450.0f };
+        float maximumSpeed{ 600.0f };
+        // Downward acceleration of the flight after a launch, game units/s^2.
+        float gravity{ 950.0f };
     };
 
     [[nodiscard]] Vec3 calculateLaunchVelocity(
         std::span<const VelocitySample> samples,
         const LaunchSettings& settings) noexcept;
 
-    inline constexpr float CHARACTER_GRAVITY_ACCELERATION_SCALE = 700.0f;
-    inline constexpr float MAXIMUM_NATIVE_JUMP_HEIGHT_GAME = 256.0f;
+    // The game replaces a velocity written to its character controller within
+    // a few frames, so a launch is flown by the addon: it integrates this
+    // velocity and steps the player's position itself.
+    struct FlightStep
+    {
+        Vec3 velocity{};
+        Vec3 displacement{};
+    };
 
-    [[nodiscard]] Vec3 addLaunchImpulse(
-        Vec3 currentVelocity,
-        Vec3 launchImpulse,
-        float maximumSpeed) noexcept;
+    [[nodiscard]] FlightStep integrateFlight(
+        Vec3 velocity,
+        float gravity,
+        float deltaSeconds) noexcept;
 
-    [[nodiscard]] float nativeJumpHeightForVelocity(
-        float upwardVelocity,
-        float gravityScalar) noexcept;
+    enum class LandingDecision : std::uint8_t
+    {
+        // No ground under the head at foot level, or still rising past a lip.
+        Continue,
+        // Feet reached the ground: stop there.
+        Land,
+        // The ground under the head is above the feet: lift onto it.
+        Mantle,
+    };
+
+    // A rising flight keeps going while its feet are no deeper than this under
+    // the surface below the head, so a launch clears a ledge lip.
+    inline constexpr float FLIGHT_MAXIMUM_RISING_PENETRATION = 60.0f;
+    // A smaller rise is a landing, not a mantle.
+    inline constexpr float MANTLE_MINIMUM_RISE = 3.0f;
+
+    [[nodiscard]] LandingDecision decideLanding(
+        bool groundFound,
+        float groundHeight,
+        float feetHeight,
+        float verticalVelocity) noexcept;
+
+    // The lift onto a ledge: straight from start to target with an ease-out.
+    // It stays on that line so the head, whose room above was checked, never
+    // swings sideways into a wall.
+    struct MantlePath
+    {
+        Vec3 start{};
+        Vec3 target{};
+        float durationSeconds{ 0.0f };
+    };
+
+    inline constexpr float MANTLE_SECONDS_PER_GAME_UNIT = 0.003f;
+    inline constexpr float MANTLE_MINIMUM_SECONDS = 0.08f;
+
+    [[nodiscard]] MantlePath makeMantlePath(
+        Vec3 start,
+        Vec3 target) noexcept;
+
+    [[nodiscard]] Vec3 evaluateMantlePath(
+        const MantlePath& path,
+        float progress) noexcept;
 
     // Exact vanilla world-surface domain used by ROCK's FixedAnchor dynamic
     // hand proxies. Dynamic car proxy layers are intentionally omitted.
