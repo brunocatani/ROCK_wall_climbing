@@ -1290,6 +1290,7 @@ namespace rock_wall_climbing
                 groundFound,
                 groundHeight,
                 access.playerPosition.z,
+                0.0f,
                 0.0f) == policy::LandingDecision::Mantle &&
             tryBeginMantle(
                 snapshot,
@@ -1450,7 +1451,8 @@ namespace rock_wall_climbing
             groundFound,
             groundHeight,
             position.z,
-            velocity.z);
+            velocity.z,
+            -appliedStep.z);
         if (landing == policy::LandingDecision::Land) {
             position.z = std::max(position.z, groundHeight);
         }

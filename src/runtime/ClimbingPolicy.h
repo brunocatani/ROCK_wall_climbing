@@ -170,11 +170,14 @@ namespace rock_wall_climbing::policy
     // A smaller rise is a landing, not a mantle.
     inline constexpr float MANTLE_MINIMUM_RISE = 3.0f;
 
+    // descentThisFrame is how far the feet fell this frame: a fast landing
+    // overshoots the ground by up to that much, which is not a ledge.
     [[nodiscard]] LandingDecision decideLanding(
         bool groundFound,
         float groundHeight,
         float feetHeight,
-        float verticalVelocity) noexcept;
+        float verticalVelocity,
+        float descentThisFrame) noexcept;
 
     // The lift onto a ledge: straight from start to target with an ease-out.
     // It stays on that line so the head, whose room above was checked, never

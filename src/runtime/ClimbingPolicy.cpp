@@ -417,10 +417,12 @@ namespace rock_wall_climbing::policy
         const bool groundFound,
         const float groundHeight,
         const float feetHeight,
-        const float verticalVelocity) noexcept
+        const float verticalVelocity,
+        const float descentThisFrame) noexcept
     {
         if (!groundFound || !std::isfinite(groundHeight) ||
-            !std::isfinite(feetHeight) || !std::isfinite(verticalVelocity)) {
+            !std::isfinite(feetHeight) || !std::isfinite(verticalVelocity) ||
+            !std::isfinite(descentThisFrame)) {
             return LandingDecision::Continue;
         }
         const float penetration = groundHeight - feetHeight;
@@ -431,7 +433,8 @@ namespace rock_wall_climbing::policy
             penetration <= FLIGHT_MAXIMUM_RISING_PENETRATION) {
             return LandingDecision::Continue;
         }
-        return penetration >= MANTLE_MINIMUM_RISE ?
+        return penetration >=
+                MANTLE_MINIMUM_RISE + std::max(0.0f, descentThisFrame) ?
             LandingDecision::Mantle :
             LandingDecision::Land;
     }
