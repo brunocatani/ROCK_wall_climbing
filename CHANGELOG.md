@@ -1,10 +1,10 @@
 # Changelog
 
-## Unreleased
+## 1.2.0
 
 ### Requirements
 
-- Needs ROCK 1.0: the addon now binds ROCK's provider API 2.0. ROCK 0.92 and
+- Needs ROCK 1.0.0: the addon now binds ROCK's provider API 2.0. ROCK 0.92 and
   earlier are no longer supported. A loaded ROCK without the API this version
   was built for stops the game at the main menu with an error box naming the
   mismatch; without ROCK the addon stays off and the game runs.
