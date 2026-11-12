@@ -2,11 +2,8 @@
 
 #include "support/Logger.h"
 
-#include <RPS/Runtime/RequiredUpdate.h>
-
 #include <cstring>
 #include <cmath>
-#include <string>
 #include <Windows.h>
 
 namespace rock_wall_climbing
@@ -19,10 +16,10 @@ namespace rock_wall_climbing
 
     namespace
     {
-        // A loaded ROCK that does not serve the API this addon was built for
-        // stops the game at the main menu (RPS/Runtime/RequiredUpdate.h); a
-        // missing ROCK does not. The addon requests the exact versions its ROCK
-        // headers declare, so every version refusal is a real mismatch.
+        // A loaded ROCK that does not serve the API this addon was built for is
+        // logged and leaves climbing off, as a missing ROCK does. The addon
+        // requests the exact versions its ROCK headers declare, so every version
+        // refusal is a real mismatch.
         bool isVersionRefusal(const rock::api::Status status) noexcept
         {
             using rock::api::Status;
@@ -33,11 +30,7 @@ namespace rock_wall_climbing
         void reportRockMismatch(const char* reason) noexcept
         {
             try {
-                logger::critical("ROCK Wall Climbing does not work with the loaded ROCK ({}): the game stops at the main menu until they match",reason);
-                RPS::Runtime::RequiredUpdate::report(L"ROCK Wall Climbing " +
-                    std::wstring(Version::NAME.begin(),Version::NAME.end()) +
-                    L" does not work with the installed ROCK: they were built for different ROCK versions. Install "
-                    L"matching versions of ROCK and ROCK Wall Climbing.");
+                logger::error("ROCK Wall Climbing does not work with the loaded ROCK ({}): they were built for different ROCK versions; climbing stays off until they match",reason);
             } catch (...) {}
         }
     }

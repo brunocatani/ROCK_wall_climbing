@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- A ROCK without the API this version was built for no longer closes the game: the
+  log names the mismatch and the addon stays off, as it does without ROCK.
+
 ## 2.0.0
 
 ### Requirements

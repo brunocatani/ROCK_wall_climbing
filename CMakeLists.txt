@@ -53,8 +53,7 @@ if(NOT EXISTS "${ROCK_INCLUDE_DIR}/ROCK/Client.h")
   message(FATAL_ERROR "ROCK_INCLUDE_DIR does not contain ROCK/Client.h: ${ROCK_INCLUDE_DIR}")
 endif()
 include_directories("${ROCK_INCLUDE_DIR}")
-# RPS Framework's staged package: the settings file (RPS::Settings) and the
-# header-only required-update stop (RPS/Runtime/RequiredUpdate.h).
+# RPS Framework's staged package: the settings file (RPS::Settings).
 set(RPSFramework_DIR "${WORKSPACE_ROOT}/my_frameworks_and_sdks/RPS_Framework/build-fast/stage/lib/cmake/RPSFramework" CACHE PATH "RPS Framework staged package")
 
 project(${NAME} VERSION ${VERSION} LANGUAGES CXX)

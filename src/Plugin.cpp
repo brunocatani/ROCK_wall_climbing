@@ -2,8 +2,6 @@
 
 #include "runtime/ClimbingRuntime.h"
 
-#include <RPS/Runtime/RequiredUpdate.h>
-
 #include <Windows.h>
 
 namespace
@@ -37,17 +35,9 @@ namespace
         case F4SE::MessagingInterface::kGameLoaded:
             runtime.beginSession();
             break;
-        case F4SE::MessagingInterface::kGameDataReady: {
-            // Before the ROCK connection can find a version mismatch.
-            static const bool watching = RPS::Runtime::RequiredUpdate::watchMainMenu(
-                L"ROCK Wall Climbing: update required");
-            if (!watching) {
-                rock_wall_climbing::logger::error(
-                    "The UI is unavailable; a ROCK version mismatch cannot stop the game at the main menu.");
-            }
+        case F4SE::MessagingInterface::kGameDataReady:
             static_cast<void>(runtime.connect());
             break;
-        }
         case F4SE::MessagingInterface::kPreLoadGame:
             runtime.endSession();
             break;
