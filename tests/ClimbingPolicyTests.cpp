@@ -341,8 +341,40 @@ namespace
     }
 }
 
+namespace
+{
+    // The edge-only rule on the faces ROCK reports for real geometry: a
+    // block's outside edge is grabbable near the edge only; an inside corner,
+    // a flat face and the far face of a thin wall never are.
+    void edgeRuleAcceptsOnlyOutsideEdgesInReach()
+    {
+        const std::array<SurfaceTriangle, 4> block{ {
+            { { -50, -50, 0 }, { 0, -50, 0 }, { 0, 50, 0 }, { 0, 0, 1 } },
+            { { -50, -50, 0 }, { 0, 50, 0 }, { -50, 50, 0 }, { 0, 0, 1 } },
+            { { 0, -50, 0 }, { 0, -50, -50 }, { 0, 50, -50 }, { 1, 0, 0 } },
+            { { 0, -50, 0 }, { 0, 50, -50 }, { 0, 50, 0 }, { 1, 0, 0 } },
+        } };
+        assert(hasGrabbableEdge(block, { 5, 0, 5 }, 10));
+        assert(!hasGrabbableEdge(block, { 5, 0, -30 }, 10));
+        assert(!hasGrabbableEdge(std::span(block).first(2), { -20, 0, 5 }, 10));
+
+        const std::array<SurfaceTriangle, 2> insideCorner{ {
+            { { 0, -50, 0 }, { 50, -50, 0 }, { 50, 50, 0 }, { 0, 0, 1 } },
+            { { 0, -50, 0 }, { 0, 50, 50 }, { 0, -50, 50 }, { 1, 0, 0 } },
+        } };
+        assert(!hasGrabbableEdge(insideCorner, { 5, 0, 5 }, 10));
+
+        const std::array<SurfaceTriangle, 2> thinWall{ {
+            { { 0, -50, -50 }, { 0, 50, -50 }, { 0, 50, 50 }, { -1, 0, 0 } },
+            { { 8, -50, -50 }, { 8, 50, 50 }, { 8, 50, -50 }, { 1, 0, 0 } },
+        } };
+        assert(!hasGrabbableEdge(thinWall, { -3, 0, 0 }, 16));
+    }
+}
+
 int main()
 {
+    edgeRuleAcceptsOnlyOutsideEdgesInReach();
     inverseHandMotionAndSurfaceCarry();
     dualHandStateDecodesBothIndependentBits();
     discontinuitiesFailClosed();

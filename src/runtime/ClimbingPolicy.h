@@ -200,6 +200,34 @@ namespace rock_wall_climbing::policy
         const MantlePath& path,
         float progress) noexcept;
 
+    // One collision triangle; normal points out of the solid it bounds.
+    struct SurfaceTriangle
+    {
+        Vec3 a{};
+        Vec3 b{};
+        Vec3 c{};
+        Vec3 normal{};
+    };
+
+    // Edge-only climbing grabs where two surfaces meet in an outside fold:
+    // the top of a wall, an outside corner, a step, a beam. Two triangles
+    // form such an edge when they share a vertex, their normals differ by at
+    // least this angle and each lies behind the other's plane. That rejects
+    // flat faces (no fold), inside corners (each in front of the other) and
+    // the far face of a thin wall (no shared vertex). 30 degrees keeps a
+    // 12-sided pipe or a chamfered corner grabbable.
+    inline constexpr float EDGE_MINIMUM_FOLD_DEGREES = 30.0f;
+    // Collision meshes weld shared vertices; this absorbs float rounding.
+    inline constexpr float EDGE_SHARED_VERTEX_TOLERANCE = 0.5f;
+    // A vertex within this distance of a plane lies on it.
+    inline constexpr float EDGE_PLANE_TOLERANCE = 0.25f;
+
+    // Whether an outside edge lies within reach of point, among triangles.
+    [[nodiscard]] bool hasGrabbableEdge(
+        std::span<const SurfaceTriangle> triangles,
+        Vec3 point,
+        float reach) noexcept;
+
     // Exact vanilla world-surface domain used by ROCK's FixedAnchor dynamic
     // hand proxies. Dynamic car proxy layers are intentionally omitted.
     inline constexpr std::uint64_t CLIMBABLE_WORLD_LAYER_MASK =

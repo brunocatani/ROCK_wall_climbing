@@ -10,13 +10,15 @@ A Fallout 4 VR addon for ROCK that lets you grab walls and pull yourself through
 - Catch a wall in the air: a hand whose grip is held grabs the surface the moment it touches it.
 - Vault ledges: when you let go or land with your head above a ledge and your feet below it, you are lifted onto it.
 - Follow supported moving surfaces while holding on.
+- Optional stamina: climbing up spends Action Points. Out of them you keep holding on, but cannot grab a new hold until they recover.
+- Optional edge-only climbing: grab the top of a wall, an outside corner, a ledge or a beam, never the middle of a flat wall.
 
 Climbing yields to other supported grab interactions. Power armor frames and actors in power armor are excluded as climbing surfaces.
 
 ## Requirements and installation
 
 - Fallout 4 VR 1.2.72.0 and F4SEVR.
-- ROCK 1.0 with its requirements, including FRIK 0.79.1 or newer with FRIK API 2.3. ROCK Wall Climbing 1.1 and earlier only work with ROCK 0.92; this version needs ROCK 1.0. With an older ROCK the addon logs the mismatch and stays off, as it does without ROCK.
+- ROCK 1.0.3 or newer with its requirements, including FRIK 0.79.1 or newer with FRIK API 2.3. ROCK Wall Climbing 1.1 and earlier only work with ROCK 0.92; this version needs ROCK 1.0. With an older ROCK the addon logs the mismatch and stays off, as it does without ROCK.
 
 Install through your mod manager and launch the game through F4SEVR. The plugin belongs at `Data/F4SE/Plugins/ROCK_Wall_Climbing.dll`.
 
@@ -34,7 +36,7 @@ The active configuration is in your Documents folder:
 My Games/Fallout4VR/Mods_Config/ROCK_Wall_Climbing/ROCK_Wall_Climbing.toml
 ```
 
-The mod creates this file with every option at its default the first time it starts, and later adds options a new version brings. Each option has its help above it as `##` lines, which the mod rewrites; your own notes on single-`#` lines above an option stay with it. An option the mod no longer reads moves to a commented block at the end of the file. Edit it to change movement response, smoothing or launch strength, then reload your save. The [configuration reference](data/config/ROCK_Wall_Climbing_example.toml) shows every option.
+The mod creates this file with every option at its default the first time it starts, and later adds options a new version brings. Each option has its help above it as `##` lines, which the mod rewrites; your own notes on single-`#` lines above an option stay with it. An option the mod no longer reads moves to a commented block at the end of the file. Edit it to change movement response, smoothing or launch strength, to make climbing cost stamina (`[Stamina]`) or to allow only edges and corners (`EdgesOnly` in `[Climbing]`), then reload your save. The [configuration reference](data/config/ROCK_Wall_Climbing_example.toml) shows every option.
 
 Upgrading from a version that used `ROCK_Wall_Climbing.ini`: the first start carries every option you changed into the TOML file and deletes the INI. Nothing to do by hand.
 
@@ -69,4 +71,4 @@ Built with the assistance of AI.
 
 ## Provider boundary
 
-Climbing negotiates Core callbacks, Hands and Grab Read, Touch Read/Write and Collision Read. ROCK owns latching a hand onto a surface; the addon owns moving the player: the climb, the flight after a launch, landing and the lift onto a ledge, using ROCK's world raycasts. Capsule-clearance work belongs to the addon.
+Climbing negotiates Core callbacks, Hands and Grab Read, Touch Read/Write and Collision Read. ROCK owns latching a hand onto a surface; the addon owns moving the player: the climb, the flight after a launch, landing and the lift onto a ledge, using ROCK's world raycasts. Which hands may grab (stamina, edge-only) is the addon's: it publishes a hand's climbing target only when that hand may take a new hold, judging edges from ROCK's surface triangles around the hand. Capsule-clearance work belongs to the addon.

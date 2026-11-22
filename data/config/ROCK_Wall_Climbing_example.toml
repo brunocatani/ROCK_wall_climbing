@@ -33,6 +33,12 @@ FollowMovingSurfaces = true
 ## A hand whose grip is already held grabs a surface the moment it touches it, also in the air. Off: only a grip press grabs.
 CatchWithHeldGrip = true
 
+## Hands grab only edges and corners: the top of a wall, an outside corner, a ledge, a step, a beam. Flat walls, floors and inside corners cannot be grabbed.
+EdgesOnly = false
+
+## With EdgesOnly, how close to an edge the hand must be to grab it, in game units. Range: 4 to 64.
+EdgeReachGameUnits = 16.0
+
 ## === 03. Launch ===
 [Launch]
 ## Letting go while pulling launches you along the pull.
@@ -59,7 +65,18 @@ TopSpeedGameUnitsPerSecond = 600.0
 ## How fast a launch falls back down. Lower flies further. Range: 100 to 3000.
 GravityGameUnitsPerSecondSquared = 950.0
 
-## === 04. Diagnostics ===
+## === 04. Stamina ===
+[Stamina]
+## Climbing up costs Action Points. Out of Action Points, the hands that hold keep holding, but a free hand cannot grab until Action Points recover to RecoverPercent.
+Enabled = false
+
+## Action Points spent per 100 game units of height gained by pulling. Height already paid for in the same climb is not paid again. Range: 0 to 200.
+ActionPointsPer100GameUnits = 15.0
+
+## After running out, Action Points must recover to this percent of their maximum before a hand can grab again. Range: 1 to 100.
+RecoverPercent = 30.0
+
+## === 05. Diagnostics ===
 [Diagnostics]
 ## Logs bounded, sampled movement telemetry. Off for normal play.
 DetailedTelemetry = false

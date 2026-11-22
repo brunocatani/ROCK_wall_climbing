@@ -178,4 +178,22 @@ namespace rock_wall_climbing
             &request,
             &result);
     }
+
+    rock::api::Status RockApiClient::queryWorldSurfaceTriangles(
+        const rock::api::collision::SurfaceTrianglesRequest& request,
+        const std::span<rock::api::collision::SurfaceTriangle> triangles,
+        rock::api::collision::SurfaceTrianglesResult& result)
+        const noexcept
+    {
+        result = {};
+        if (!ready()) {
+            return rock::api::Status::NotReady;
+        }
+        return _collision->queryWorldSurfaceTriangles(
+            _ownerToken,
+            &request,
+            triangles.data(),
+            static_cast<std::uint32_t>(triangles.size()),
+            &result);
+    }
 }

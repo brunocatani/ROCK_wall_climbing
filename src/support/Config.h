@@ -26,6 +26,17 @@ namespace rock_wall_climbing
         float headClearanceGameUnits{ 12.0f };
         bool followMovingSurfaces{ true };
         bool catchWithHeldGrip{ true };
+        bool edgesOnly{ false };
+        float edgeReachGameUnits{ 16.0f };
+
+        // Climbing paid with Action Points, the game's stamina.
+        struct Stamina
+        {
+            bool enabled{ false };
+            float actionPointsPer100GameUnits{ 15.0f };
+            float recoverPercent{ 30.0f };
+        };
+        Stamina stamina{};
 
         policy::LaunchSettings launch{};
         bool detailedTelemetry{ false };

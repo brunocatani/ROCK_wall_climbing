@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Climbing can cost stamina (Action Points). Every bit of height you pull
+  yourself up spends them; height already paid for in the same climb is not
+  paid again. Out of Action Points you do not fall: the hands that hold keep
+  holding, but a free hand cannot grab until Action Points recover to
+  `RecoverPercent` of their maximum. Off by default; `[Stamina]` turns it on.
+- Edge-only climbing: with `EdgesOnly` in `[Climbing]`, hands grab only
+  outside edges and corners, such as the top of a wall, an outside corner, a
+  ledge, a step or a beam, never a flat wall, a floor or an inside corner.
+  `EdgeReachGameUnits` sets how close to the edge the hand must be. Off by
+  default.
+
+### Requirements
+
+- Needs ROCK 1.0.3 or newer: edge-only climbing reads the surfaces around the
+  hand through ROCK's surface-triangle query.
+
 ## 2.0.1
 
 ### Changed

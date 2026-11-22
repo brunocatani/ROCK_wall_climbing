@@ -165,6 +165,22 @@ namespace rock_wall_climbing
             policy::Vec3 startPosition{};
         };
 
+        // Action Points paid for climbing. Out of them, held hands keep their
+        // grip but free hands cannot grab until they recover.
+        struct StaminaState
+        {
+            bool exhausted{ false };
+            bool unreadableLogged{ false };
+            float current{ 0.0f };
+            float maximum{ 0.0f };
+            // Height pulled in the current climb, and the most of it paid.
+            float climbHeight{ 0.0f };
+            float paidHeight{ 0.0f };
+        };
+
+        // Triangles one edge query reads around a free hand.
+        static constexpr std::size_t EDGE_TRIANGLE_CAPACITY = 256;
+
         ClimbingRuntime() = default;
 
         static void ROCK_CALL onRockFrame(
@@ -178,9 +194,22 @@ namespace rock_wall_climbing
             const noexcept;
         void observeBlockers(std::uint32_t blockers) noexcept;
 
+        // Publishes the climbing target of each hand in handMask (bit 0
+        // right, bit 1 left); a hand without one cannot start a climb grab.
         [[nodiscard]] bool publishTargets(
-            const rock_wall_climbing::Frame& snapshot)
+            const rock_wall_climbing::Frame& snapshot,
+            std::uint32_t handMask)
             noexcept;
+        // Hands that may hold a climbing target this frame: every held hand,
+        // and free hands that stamina and the edge rule allow.
+        [[nodiscard]] std::uint32_t grabbableHands(
+            const rock_wall_climbing::Frame& snapshot,
+            const std::array<ObservedHand, 2>& observed) noexcept;
+        [[nodiscard]] bool handNearEdge(
+            const rock_wall_climbing::Frame& snapshot,
+            std::size_t handIndex) noexcept;
+        void refreshStamina() noexcept;
+        void payClimbedHeight(float pulledHeight) noexcept;
         void clearTargets() noexcept;
         [[nodiscard]] bool observeHands(
             std::array<ObservedHand, 2>& observed,
@@ -267,6 +296,14 @@ namespace rock_wall_climbing
         VelocityHistory _velocityHistory{};
 
         AirState _air{};
+        StaminaState _stamina{};
+
+        std::array<rock::api::collision::SurfaceTriangle,
+            EDGE_TRIANGLE_CAPACITY> _edgeQueryTriangles{};
+        std::array<policy::SurfaceTriangle,
+            EDGE_TRIANGLE_CAPACITY> _edgeTriangles{};
+        std::array<bool, 2> _handNearEdge{};
+        std::uint32_t _lastEdgeQueryResult{ UINT32_MAX };
 
         bool _gravityOwned{ false };
         bool _gravityRestoreDeferredLogged{ false };

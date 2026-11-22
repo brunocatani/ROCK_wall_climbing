@@ -45,6 +45,12 @@ namespace rock_wall_climbing
             rock::api::collision::WorldRaycastResult& result)
             const noexcept;
 
+        [[nodiscard]] rock::api::Status queryWorldSurfaceTriangles(
+            const rock::api::collision::SurfaceTrianglesRequest& request,
+            std::span<rock::api::collision::SurfaceTriangle> triangles,
+            rock::api::collision::SurfaceTrianglesResult& result)
+            const noexcept;
+
     private:
         rock::api::Client _client;
         const rock::api::core::Api* _core{};

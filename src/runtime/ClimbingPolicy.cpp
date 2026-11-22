@@ -1,7 +1,9 @@
 #include "runtime/ClimbingPolicy.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <initializer_list>
 #include <numbers>
 
 namespace rock_wall_climbing::policy
@@ -466,5 +468,97 @@ namespace rock_wall_climbing::policy
         return add(
             path.start,
             scale(subtract(path.target, path.start), eased));
+    }
+
+    namespace
+    {
+        [[nodiscard]] float distanceToSegment(
+            const Vec3 point,
+            const Vec3 start,
+            const Vec3 end) noexcept
+        {
+            const Vec3 segment = subtract(end, start);
+            const float segmentLengthSquared = lengthSquared(segment);
+            const float along = segmentLengthSquared > 1.0e-8f ?
+                std::clamp(
+                    dot(subtract(point, start), segment) / segmentLengthSquared,
+                    0.0f,
+                    1.0f) :
+                0.0f;
+            return length(subtract(point, add(start, scale(segment, along))));
+        }
+
+        // Every vertex of other on or behind plane's surface, at least one
+        // clearly behind it.
+        [[nodiscard]] bool liesBehind(
+            const SurfaceTriangle& plane,
+            const Vec3 planeNormal,
+            const SurfaceTriangle& other) noexcept
+        {
+            bool clearlyBehind = false;
+            for (const Vec3 vertex : { other.a, other.b, other.c }) {
+                const float height = dot(planeNormal, subtract(vertex, plane.a));
+                if (height > EDGE_PLANE_TOLERANCE) {
+                    return false;
+                }
+                clearlyBehind = clearlyBehind || height < -EDGE_PLANE_TOLERANCE;
+            }
+            return clearlyBehind;
+        }
+    }
+
+    bool hasGrabbableEdge(
+        const std::span<const SurfaceTriangle> triangles,
+        const Vec3 point,
+        const float reach) noexcept
+    {
+        if (!finite(point) || !std::isfinite(reach) || reach <= 0.0f) {
+            return false;
+        }
+        const float maximumNormalDot = std::cos(
+            EDGE_MINIMUM_FOLD_DEGREES * std::numbers::pi_v<float> / 180.0f);
+        constexpr float sharedToleranceSquared =
+            EDGE_SHARED_VERTEX_TOLERANCE * EDGE_SHARED_VERTEX_TOLERANCE;
+
+        for (std::size_t first = 0; first < triangles.size(); ++first) {
+            const auto& left = triangles[first];
+            Vec3 leftNormal{};
+            if (!tryNormalize(left.normal, leftNormal)) {
+                continue;
+            }
+            for (std::size_t second = first + 1; second < triangles.size(); ++second) {
+                const auto& right = triangles[second];
+                Vec3 rightNormal{};
+                if (!tryNormalize(right.normal, rightNormal) ||
+                    dot(leftNormal, rightNormal) > maximumNormalDot) {
+                    continue;
+                }
+
+                std::array<Vec3, 3> shared{};
+                std::size_t sharedCount = 0;
+                for (const Vec3 leftVertex : { left.a, left.b, left.c }) {
+                    for (const Vec3 rightVertex : { right.a, right.b, right.c }) {
+                        if (lengthSquared(subtract(leftVertex, rightVertex)) <=
+                            sharedToleranceSquared) {
+                            shared[sharedCount++] = leftVertex;
+                            break;
+                        }
+                    }
+                }
+                if (sharedCount == 0 ||
+                    !liesBehind(left, leftNormal, right) ||
+                    !liesBehind(right, rightNormal, left)) {
+                    continue;
+                }
+
+                const float distance = sharedCount == 1 ?
+                    length(subtract(point, shared[0])) :
+                    distanceToSegment(point, shared[0], shared[1]);
+                if (distance <= reach) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 }

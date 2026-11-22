@@ -36,6 +36,9 @@ namespace rock_wall_climbing
         constexpr Range kMinimumSpeed{ 0.0f, 500.0f };
         constexpr Range kMaximumSpeed{ 1.0f, 1200.0f };
         constexpr Range kGravity{ 100.0f, 3000.0f };
+        constexpr Range kEdgeReach{ 4.0f, 64.0f };
+        constexpr Range kStaminaCost{ 0.0f, 200.0f };
+        constexpr Range kRecoverPercent{ 1.0f, 100.0f };
 
         std::string text(bool value) { return value ? "true" : "false"; }
         std::string text(int value) { return std::to_string(value); }
@@ -116,7 +119,8 @@ namespace rock_wall_climbing
         constexpr auto general = "01. General";
         constexpr auto climbing = "02. Climbing";
         constexpr auto launch = "03. Launch";
-        constexpr auto diagnostics = "04. Diagnostics";
+        constexpr auto stamina = "04. Stamina";
+        constexpr auto diagnostics = "05. Diagnostics";
         return {
             { "General", "Enabled", general, "Turns wall climbing on.", player, ValueType::Boolean, text(d.enabled) },
             { "General", "LogLevel", general, "0=off, 1=errors, 2=info, 3=debug, 4=trace.", player, ValueType::Integer,
@@ -144,6 +148,13 @@ namespace rock_wall_climbing
                 "A hand whose grip is already held grabs a surface the moment it touches it, also in the air. Off: only a "
                 "grip press grabs.",
                 player, ValueType::Boolean, text(d.catchWithHeldGrip) },
+            { "Climbing", "EdgesOnly", climbing,
+                "Hands grab only edges and corners: the top of a wall, an outside corner, a ledge, a step, a beam. Flat "
+                "walls, floors and inside corners cannot be grabbed.",
+                player, ValueType::Boolean, text(d.edgesOnly) },
+            { "Climbing", "EdgeReachGameUnits", climbing,
+                withRange("With EdgesOnly, how close to an edge the hand must be to grab it, in game units.", kEdgeReach),
+                player, ValueType::Float, text(d.edgeReachGameUnits) },
             { "Launch", "Enabled", launch, "Letting go while pulling launches you along the pull.", player,
                 ValueType::Boolean, text(d.launch.enabled) },
             { "Launch", "VelocityHistorySeconds", launch,
@@ -164,6 +175,20 @@ namespace rock_wall_climbing
             { "Launch", "GravityGameUnitsPerSecondSquared", launch,
                 withRange("How fast a launch falls back down. Lower flies further.", kGravity), player, ValueType::Float,
                 text(d.launch.gravity) },
+            { "Stamina", "Enabled", stamina,
+                "Climbing up costs Action Points. Out of Action Points, the hands that hold keep holding, but a free hand "
+                "cannot grab until Action Points recover to RecoverPercent.",
+                player, ValueType::Boolean, text(d.stamina.enabled) },
+            { "Stamina", "ActionPointsPer100GameUnits", stamina,
+                withRange("Action Points spent per 100 game units of height gained by pulling. Height already paid for in "
+                          "the same climb is not paid again.",
+                    kStaminaCost),
+                player, ValueType::Float, text(d.stamina.actionPointsPer100GameUnits) },
+            { "Stamina", "RecoverPercent", stamina,
+                withRange("After running out, Action Points must recover to this percent of their maximum before a hand "
+                          "can grab again.",
+                    kRecoverPercent),
+                player, ValueType::Float, text(d.stamina.recoverPercent) },
             { "Diagnostics", "DetailedTelemetry", diagnostics,
                 "Logs bounded, sampled movement telemetry. Off for normal play.", player, ValueType::Boolean,
                 text(d.detailedTelemetry) },
@@ -230,6 +255,14 @@ namespace rock_wall_climbing
             number(store, "Climbing", "HeadClearanceGameUnits", d.headClearanceGameUnits, kHeadClearance);
         config.followMovingSurfaces = valueOf(store, "Climbing", "FollowMovingSurfaces") == "true";
         config.catchWithHeldGrip = valueOf(store, "Climbing", "CatchWithHeldGrip") == "true";
+        config.edgesOnly = valueOf(store, "Climbing", "EdgesOnly") == "true";
+        config.edgeReachGameUnits =
+            number(store, "Climbing", "EdgeReachGameUnits", d.edgeReachGameUnits, kEdgeReach);
+        config.stamina.enabled = valueOf(store, "Stamina", "Enabled") == "true";
+        config.stamina.actionPointsPer100GameUnits = number(store, "Stamina", "ActionPointsPer100GameUnits",
+            d.stamina.actionPointsPer100GameUnits, kStaminaCost);
+        config.stamina.recoverPercent =
+            number(store, "Stamina", "RecoverPercent", d.stamina.recoverPercent, kRecoverPercent);
         config.launch.enabled = valueOf(store, "Launch", "Enabled") == "true";
         config.launch.historySeconds = number(store, "Launch", "VelocityHistorySeconds", d.launch.historySeconds, kHistory);
         config.launch.directionFilterDegrees =

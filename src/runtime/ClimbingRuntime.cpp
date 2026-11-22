@@ -453,12 +453,9 @@ namespace rock_wall_climbing
                 _targetGeneration);
         }
 
-        if (!publishTargets(snapshot)) {
-            finishClimb(nullptr,"target-publication");
-            clearTargets();
-            return;
-        }
-
+        // Read the hands before publishing: which hands get a target depends
+        // on whether they hold, and a hand ROCK latched this frame must keep
+        // its target even when stamina or the edge rule now refuse new grabs.
         std::array<ObservedHand, 2> observed{};
         bool invalidated = false;
         if (!observeHands(observed, invalidated)) {
@@ -473,6 +470,13 @@ namespace rock_wall_climbing
             logger::warn(
                 "A climbing target was invalidated; rearming with targetGeneration={} next frame.",
                 _targetGeneration);
+            return;
+        }
+
+        refreshStamina();
+        if (!publishTargets(snapshot, grabbableHands(snapshot, observed))) {
+            finishClimb(nullptr,"target-publication");
+            clearTargets();
             return;
         }
 
@@ -555,6 +559,8 @@ namespace rock_wall_climbing
             _targetPlayerPosition = access.playerPosition;
             _targetPositionValid = true;
             _velocityHistory.clear();
+            _stamina.climbHeight = 0.0f;
+            _stamina.paidHeight = 0.0f;
             logger::info(
                 "Climb started hands={} player=({:.2f},{:.2f},{:.2f}).",
                 currentHeldCount,
@@ -714,6 +720,8 @@ namespace rock_wall_climbing
             _targetPlayerPosition = policy::add(
                 _targetPlayerPosition,
                 motionBlend.movementDelta);
+            // The pull only: a moving surface carrying the player is free.
+            payClimbedHeight(motionBlend.pullDelta.z);
         }
 
         const float targetLead = policy::length(policy::subtract(
@@ -838,8 +846,147 @@ namespace rock_wall_climbing
         }
     }
 
+    std::uint32_t ClimbingRuntime::grabbableHands(
+        const rock_wall_climbing::Frame& snapshot,
+        const std::array<ObservedHand, 2>& observed) noexcept
+    {
+        std::uint32_t mask = 0;
+        for (std::size_t index = 0; index < observed.size(); ++index) {
+            const std::uint32_t bit = 1u << index;
+            if (observed[index].held) {
+                mask |= bit;
+                _handNearEdge[index] = false;
+                continue;
+            }
+            if (_stamina.exhausted) {
+                continue;
+            }
+            if (_config.edgesOnly && !handNearEdge(snapshot, index)) {
+                continue;
+            }
+            mask |= bit;
+        }
+        return mask;
+    }
+
+    bool ClimbingRuntime::handNearEdge(
+        const rock_wall_climbing::Frame& snapshot,
+        const std::size_t handIndex) noexcept
+    {
+        const policy::Vec3 hand = translation(
+            handIndex == 0 ? snapshot.rightHandTransform : snapshot.leftHandTransform);
+        rock::api::collision::SurfaceTrianglesRequest request{};
+        request.centreGame = providerPoint(hand);
+        request.radiusGame = _config.edgeReachGameUnits;
+        request.worldGeneration = snapshot.sample.worldGeneration;
+        request.skeletonGeneration = snapshot.sample.skeletonGeneration;
+        request.providerGeneration = snapshot.sample.providerGeneration;
+        rock::api::collision::SurfaceTrianglesResult result{};
+        const auto status = rockApiClient().queryWorldSurfaceTriangles(
+            request,
+            _edgeQueryTriangles,
+            result);
+        const auto statusValue = static_cast<std::uint32_t>(status);
+        if (statusValue != _lastEdgeQueryResult) {
+            if (status != rock::api::Status::Ok) {
+                logger::warn(
+                    "ROCK surface-triangle query failed: result={}; edge-only hands cannot grab until it recovers.",
+                    statusValue);
+            } else if (_lastEdgeQueryResult != UINT32_MAX) {
+                logger::info("ROCK surface-triangle query recovered.");
+            }
+            _lastEdgeQueryResult = statusValue;
+        }
+
+        bool nearEdge = false;
+        if (status == rock::api::Status::Ok) {
+            const std::size_t count = (std::min)(
+                static_cast<std::size_t>(result.count),
+                _edgeQueryTriangles.size());
+            for (std::size_t index = 0; index < count; ++index) {
+                const auto& source = _edgeQueryTriangles[index];
+                _edgeTriangles[index] = {
+                    point(source.aGame),
+                    point(source.bGame),
+                    point(source.cGame),
+                    point(source.normalGame),
+                };
+            }
+            nearEdge = policy::hasGrabbableEdge(
+                std::span<const policy::SurfaceTriangle>(_edgeTriangles.data(), count),
+                hand,
+                _config.edgeReachGameUnits);
+        }
+        if (nearEdge != _handNearEdge[handIndex]) {
+            logger::debug(
+                "{} hand {} a grabbable edge.",
+                handIndex == 0 ? "Right" : "Left",
+                nearEdge ? "reached" : "left");
+            _handNearEdge[handIndex] = nearEdge;
+        }
+        return nearEdge;
+    }
+
+    void ClimbingRuntime::refreshStamina() noexcept
+    {
+        if (!_config.stamina.enabled) {
+            _stamina.exhausted = false;
+            return;
+        }
+        auto* player = RE::PlayerCharacter::GetSingleton();
+        const auto* values = RE::ActorValue::GetSingleton();
+        if (!player || !values || !values->actionPoints) {
+            // Climbing cannot be paid for, so no new grab is allowed.
+            if (!_stamina.unreadableLogged) {
+                logger::warn("Action Points unreadable; free hands cannot grab while climbing costs stamina.");
+                _stamina.unreadableLogged = true;
+            }
+            _stamina.exhausted = true;
+            return;
+        }
+        _stamina.unreadableLogged = false;
+        _stamina.current = player->GetActorValue(*values->actionPoints);
+        _stamina.maximum = player->GetPermanentActorValue(*values->actionPoints);
+
+        const float recovered = _stamina.maximum * _config.stamina.recoverPercent / 100.0f;
+        if (!_stamina.exhausted && _stamina.current <= 0.0f) {
+            _stamina.exhausted = true;
+            logger::info(
+                "Out of Action Points: free hands cannot grab until {:.0f} of {:.0f} recover.",
+                recovered,
+                _stamina.maximum);
+        } else if (_stamina.exhausted && _stamina.current >= recovered) {
+            _stamina.exhausted = false;
+            logger::info(
+                "Action Points recovered to {:.0f} of {:.0f}; hands can grab again.",
+                _stamina.current,
+                _stamina.maximum);
+        }
+    }
+
+    void ClimbingRuntime::payClimbedHeight(const float pulledHeight) noexcept
+    {
+        _stamina.climbHeight += pulledHeight;
+        const float gained = _stamina.climbHeight - _stamina.paidHeight;
+        if (!_config.stamina.enabled || gained <= 0.0f) {
+            return;
+        }
+        _stamina.paidHeight = _stamina.climbHeight;
+        const float cost = (std::min)(
+            gained * _config.stamina.actionPointsPer100GameUnits / 100.0f,
+            (std::max)(_stamina.current, 0.0f));
+        auto* player = RE::PlayerCharacter::GetSingleton();
+        const auto* values = RE::ActorValue::GetSingleton();
+        if (cost <= 0.0f || !player || !values || !values->actionPoints) {
+            return;
+        }
+        player->ModActorValue(RE::ACTOR_VALUE_MODIFIER::kDamage, *values->actionPoints, -cost);
+        _stamina.current -= cost;
+    }
+
     bool ClimbingRuntime::publishTargets(
-        const rock_wall_climbing::Frame& snapshot) noexcept
+        const rock_wall_climbing::Frame& snapshot,
+        const std::uint32_t handMask) noexcept
     {
         std::array<rock::api::touch::TouchGrabTarget, 2> targets{};
         const auto makeTarget = [&](
@@ -873,16 +1020,22 @@ namespace rock_wall_climbing
             target.providerGeneration = snapshot.sample.providerGeneration;
             return target;
         };
-        targets[0] = makeTarget(
-            RIGHT_TARGET_ID,
-            rock::api::touch::TouchGrabTargetFlag::AllowRightHand);
-        targets[1] = makeTarget(
-            LEFT_TARGET_ID,
-            rock::api::touch::TouchGrabTargetFlag::AllowLeftHand);
+        std::size_t targetCount = 0;
+        if ((handMask & 1u) != 0) {
+            targets[targetCount++] = makeTarget(
+                RIGHT_TARGET_ID,
+                rock::api::touch::TouchGrabTargetFlag::AllowRightHand);
+        }
+        if ((handMask & 2u) != 0) {
+            targets[targetCount++] = makeTarget(
+                LEFT_TARGET_ID,
+                rock::api::touch::TouchGrabTargetFlag::AllowLeftHand);
+        }
 
+        // Replaces the scope: a hand left out loses only its unheld target.
         const auto result = rockApiClient().publishTargets(
             CLIMBING_SCOPE_TOKEN,
-            targets);
+            std::span<const rock::api::touch::TouchGrabTarget>(targets.data(), targetCount));
         const auto resultValue = static_cast<std::uint32_t>(result);
         if (result != rock::api::Status::Ok) {
             if (resultValue != _lastPublishResult) {
