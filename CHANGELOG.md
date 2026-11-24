@@ -17,7 +17,7 @@
 
 ### Requirements
 
-- Needs ROCK 1.0.3 or newer: edge-only climbing reads the surfaces around the
+- Needs ROCK 1.0.4 or newer. Edge-only climbing reads the surfaces around the
   hand through ROCK's surface-triangle query.
 
 ## 2.0.1
